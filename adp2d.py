@@ -424,7 +424,7 @@ class Data():
             dim = max(self.nrows, self.ncols)
             scale = max_allowed_dim / dim
 
-        self.__write_png(b"img.png", self.__datapoints, self.data, self.__clusters.centers.count, self.ncols, self.nrows, np.uint64(self.ncols * scale), np.uint64(self.nrows * scale) )
+        self.__write_png(fname.encode("utf-8"), self.__datapoints, self.data, self.__clusters.centers.count, self.ncols, self.nrows, np.uint64(self.ncols * scale), np.uint64(self.nrows * scale) )
 
     def __del__(self):
         if not self.__datapoints is None:
