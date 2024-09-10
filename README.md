@@ -1,7 +1,7 @@
 # ADP for image segmentation
 Using Advanced Density Peak algorithm for satellite image deblending.
 
-Set variables in ```fits_segmentation.py`
+Set variables in ```fits_segmentation.py``` to get the 
 ## Compile 
 ```make``` :)
 
