@@ -6,31 +6,31 @@
 #include <stdlib.h>
 #include <stdlib.h>
 #include <string.h>
- 
-
-#define T double
-#define DATA_DIMS 0 
-
-#ifdef USE_FLOAT32
-	#define FLOAT_TYPE float
-#else
-	#define FLOAT_TYPE double 
-#endif
-
-#ifdef USE_INT32
-	#define MY_SIZE_MAX UINT32_MAX
-	#define idx_t uint32_t
-#else
-	#define MY_SIZE_MAX UINT64_MAX
-	#define idx_t uint64_t
-#endif
-
 
 #define DTHR 23.92812698
 #define PI_F 3.1415926f
 #define ARRAY_INCREMENT 500
-#define DA_DTYPE idx_t
+
+#ifdef USE_FLOAT32
+    #define FLOAT_TYPE float 
+    #define float_t float
+#else 
+    #define FLOAT_TYPE double
+    #define float_t double
+#endif
+
+#ifdef USE_INT32
+    #define idx_t uint32_t
+    #define MY_SIZE_MAX UINT32_MAX
+#else
+    #define idx_t uint64_t
+    #define MY_SIZE_MAX UINT64_MAX
+#endif
+
+
+
 #define NOBORDER MY_SIZE_MAX
+
 
 /**********************************
  * DATA STRUCTURES FOR CLUSTERING *
@@ -118,6 +118,7 @@ typedef struct border_t border_t;
 typedef struct SparseBorder_t SparseBorder_t;
 typedef struct AdjList_t AdjList_t; 
 
+void LinkedList_Insert(LinkedList *L, Node *n);
 void DynamicArray_allocate(lu_dynamicArray *a);
 void DynamicArray_pushBack(lu_dynamicArray *a, idx_t p);
 //void Clusters_allocate(Clusters *c);
@@ -125,8 +126,7 @@ void Clusters_allocate(Clusters *c, int s);
 void Clusters_free(Clusters *c);
 
 int cmp(const void *a, const void *b);
-void computeRho(Datapoint_info *particles, const FLOAT_TYPE d,
-                const idx_t points);
+FLOAT_TYPE avg(const FLOAT_TYPE *x, const idx_t n);
 int cmpPP(const void *p1, const void *p2);
 void computeCorrection(Datapoint_info *particles, int* mask, idx_t n, FLOAT_TYPE Z);
 
@@ -139,10 +139,3 @@ void freeDatapointArray(Datapoint_info* d, size_t n);
 
 Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, int ncols, int r);
 void Delete_adjlist_element(Clusters * c, const idx_t list_idx, const idx_t el);
-int merging_roles( FLOAT_TYPE dens1, FLOAT_TYPE dens1_err,
-			  FLOAT_TYPE dens2, FLOAT_TYPE dens2_err,
-			  FLOAT_TYPE dens_border, FLOAT_TYPE dens_border_err );
-int is_a_merging( FLOAT_TYPE dens1, FLOAT_TYPE dens1_err,
-			 FLOAT_TYPE dens2, FLOAT_TYPE dens2_err,
-			 FLOAT_TYPE dens_border, FLOAT_TYPE dens_border_err,
-			 FLOAT_TYPE Z);

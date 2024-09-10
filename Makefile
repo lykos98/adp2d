@@ -1,5 +1,5 @@
 LIBRARIES=-lm -fopenmp 
-OPTIM=-O4 -mavx2 -march=native  -Wall -Wextra -DUSE_NORM
+OPTIM=-O3 -mavx2 -march=native  -Wall -Wextra -DUSE_NORM
 DEBUG=
 SRC="src"
 VERBOSE=-DVERBOSE
@@ -8,12 +8,11 @@ CC=gcc
 
 all: lib 
 
-lib: bin/libdadac.so
+lib: bin/libadp2d.so
 
-bin/libdadac.so: bin/dadac.o 
-	${CC} -shared bin/dadac.o  ${DEBUG} ${OPTIM} ${LIBRARIES} -o bin/libdadac.so 
-
-bin/dadac.o: src/dadac.c 
-	${CC} -c src/dadac.c  ${DEBUG} ${OPTIM} ${LIBRARIES} -fPIC -o bin/dadac.o 
+bin/libadp2d.so: bin/adp2d.o 
+	${CC} -shared bin/adp2d.o  ${DEBUG} ${OPTIM} ${LIBRARIES} -o bin/libadp2d.so 
+bin/adp2d.o: src/adp2d.c 
+	${CC} -c src/adp2d.c  ${DEBUG} ${OPTIM} ${LIBRARIES} ${VERBOSE} -fPIC -o bin/adp2d.o 
 clean:
 	rm bin/*.so bin/*.o *.o driver test

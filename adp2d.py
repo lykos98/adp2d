@@ -21,7 +21,7 @@ class Heap(ct.Structure):
 
 class luDynamicArray(ct.Structure):
     _fields_ = [
-        
+        ("data", ct.POINTER(ctIdxType)),
         ("size", ctIdxType),
         ("count", ctIdxType)
     ]
@@ -85,7 +85,7 @@ class Data():
         Raises:
             TypeError: Raises TypeError if a type different from a matrix is passed 
         """
-        path = os.path.join(os.path.dirname(__file__), "bin/libdadac.so")
+        path = os.path.join(os.path.dirname(__file__), "bin/libadp2d.so")
         self.lib = ct.CDLL(path)
 
         global ctFloatType, ctIdxType
@@ -125,6 +125,15 @@ class Data():
                                                     ct.c_int32]
         self.__computeDensityFromImg.restype  = ct.POINTER(DatapointInfo)
 
+        #void setRhoErrK(Datapoint_info* points, FLOAT_TYPE* rho, FLOAT_TYPE* rhoErr, idx_t* k, size_t n)
+        self.__setRhoErrK = self.lib.setRhoErrK
+        self.__setRhoErrK.argtypes = [  ct.POINTER(DatapointInfo),    
+                                        np.ctypeslib.ndpointer(ctFloatType), 
+                                        np.ctypeslib.ndpointer(ctFloatType),
+                                        np.ctypeslib.ndpointer(ctIdxType),
+                                        ct.c_uint64 ]
+
+
         self.__computeCorrection = self.lib.computeCorrection
         self.__computeCorrection.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(np.int32), ctIdxType, ct.c_double]
 
@@ -144,6 +153,9 @@ class Data():
         self.__H3 = self.lib.Heuristic3
         self.__H3.argtypes = [ct.POINTER(Clusters), ct.POINTER(DatapointInfo), ct.c_double, ct.c_int]
         
+        self.__freeDatapoints = self.lib.freeDatapointArray
+        self.__freeDatapoints.argtypes = [ct.POINTER(DatapointInfo), ct.c_uint64]
+
         self.__freeClusters = self.lib.Clusters_free
         self.__freeClusters.argtypes = [ct.POINTER(Clusters)]
 
@@ -154,6 +166,17 @@ class Data():
             ct.c_uint64,
         ]
 
+
+        #void tiny_colorize(
+        #        const char* fname, 
+        #        Datapoint_info* dp, 
+        #        FLOAT_TYPE* data, 
+        #        uint32_t n_clusters, 
+        #        uint32_t og_width, 
+        #        uint32_t og_height, 
+        #        uint32_t target_width,
+        #        uint32_t target_height)
+        #{
         self.__write_png = self.lib.tiny_colorize
         self.__write_png.argtypes = [ct.c_char_p,
                                      ct.POINTER(DatapointInfo),
@@ -169,8 +192,8 @@ class Data():
             raise TypeError("Please provide a 2d numpy array")
 
 
-        self.__datapoints   = None
-        self.__clusters     = None
+        self.__datapoints     = None
+        self.__clusters       = None
         self.n              = self.data.shape[0]
         self.dims           = self.data.shape[1]
         self.k              = None
@@ -192,6 +215,68 @@ class Data():
         self.mask = mask
         self.__datapoints = self.__computeDensityFromImg(img,mask, img.shape[0], img.shape[1], r)
         self.state["density"] = True
+
+    def computeNeighbors_kdtree(self, k : int):
+        
+        """Compute the k nearest neighbors of each point
+
+        Args:
+            k (int): Number of neighbors to compute for each point 
+            alg (str): default "kd" for kdtree else choose "vp" for vptree
+        """
+        self.k = k
+        self.__datapoints = self.__NgbhSearch_kdtree(self.data, self.n, self.dims, self.k)
+        #Datapoint_info* NgbhSearch_vpTree(void* data, size_t n, size_t byteSize, size_t dims, size_t k, float_t (*metric)(void *, void *));
+        self.state["ngbh"] = True
+        self.neighbors = None
+
+    def computeAvgOverNgbh(self, vals, error,k):
+        retVals = np.zeros_like(vals)
+        retError = np.zeros_like(error)
+        self.__computeAvg(self.__datapoints, retVals, retError, vals, error, k, self.n)
+        return retVals, retError
+
+    def computeNeighbors_vptree(self, k : int, alg="kd"):
+        
+        """Compute the k nearest neighbors of each point
+
+        Args:
+            k (int): Number of neighbors to compute for each point 
+            alg (str): default "kd" for kdtree else choose "vp" for vptree
+        """
+        self.k = k
+        #Datapoint_info* NgbhSearch_vpTree(void* data, size_t n, size_t byteSize, size_t dims, size_t k, float_t (*metric)(void *, void *));
+        self.__datapoints = self.__NgbhSearch_vptree(self.data.ctypes.data, self.n, self.data.itemsize, self.dims, self.k, self.__eud)
+        self.state["ngbh"] = True
+        self.neighbors = None
+
+    def computeIDtwoNN(self):
+
+        """ Compute the intrinsic dimension of the dataset via the TWO Nearest Neighbors method.
+            Ref. paper 
+
+        Raises:
+            ValueError: Raises value error if neighbors are not computed yet, use `Data.computeNeighbors()` 
+        """
+
+        if not self.state["ngbh"]:
+            raise ValueError("Please compute Neighbors before calling this function")
+        self.id = self.__idEstimate(self.__datapoints,self.n)
+        self.state["id"] = True
+
+    def computeDensity(self):
+
+        """Compute density value for each point
+
+        Raises:
+            ValueError: Raises value error if ID is not computed, use `Data.computeIDtwoNN` method
+        """
+        if not self.state["id"]:
+            raise ValueError("Please compute ID before calling this function")
+        self.__computeRho(self.__datapoints, self.id, self.n)
+        self.state["density"] = True
+        self.density = None
+        self.densityError = None
 
     def computeClusteringADP(self,Z : float, halo = True, useSparse = "auto"):
 
@@ -252,6 +337,8 @@ class Data():
         #self.clusterAssignment = np.array([int(self.__datapoints[j].cluster_idx) for j in range(self.n)], dtype = np.int32)
         return self.clusterAssignment
 
+    def getBorders(self):
+        raise NotImplemented("It's difficult I have to think about it")
 
     def getDensity(self) -> list:
 
@@ -287,14 +374,60 @@ class Data():
         self.kstar = np.array([float(self.__datapoints[j].kstar) for j in range(self.n)]) 
         return self.kstar
 
+    def getDensityError(self):
+        """Retrieve list of density error values
+
+        Raises:
+            ValueError: Raise error if density is not computed, use `Data.computeDensity()` 
+
+        Returns: List of density error values
+            
+        """
+        if self.densityError is None:
+            if self.state["density"]:
+                self.densityError = np.array([float(self.__datapoints[j].log_rho_err) for j in range(self.n)])
+                return self.densityError
+            else:
+                raise ValueError("Density Error is not computed yet")
+        else:
+            return self.densityError
+    
+    def getNeighbors(self) -> list:
+        """Retrieve k Nearest Neighbors of each point and their associated distance
+
+        Raises:
+            ValueError: Raise error if neighbors are not computed, use `Data.computeNeighbors(k)` 
+
+        Returns:
+            Returns lists of neighbors and distances            
+        """
+        if self.neighbors is None:
+            if self.state["ngbh"]:
+                self.neighbors = (
+                            np.array([[int(self.__datapoints[j].ngbh.data[kk].array_idx) for kk in range(self.k)] for j in range(self.n)]),
+                            np.array([[float(self.__datapoints[j].ngbh.data[kk].value)**(0.5) for kk in range(self.k)] for j in range(self.n)])
+                        )
+                return self.neighbors
+            else:
+                raise ValueError("Density is not computed yet")
+        else:
+            return self.neighbors
+
+    def setRhoErrK(self, rho, err, k):
+        self.__setRhoErrK(self.__datapoints, rho, err, k, self.n)
+        self.state["density"] = True
+        return
+
     def writePNG(self,fname, scale = 0.5):
-        max_allowed_dim = 30000
+        max_allowed_dim = 4000
         if self.nrows * scale > max_allowed_dim or self.ncols * scale > max_allowed_dim:
             dim = max(self.nrows, self.ncols)
             scale = max_allowed_dim / dim
 
-        self.__write_png(bytes(fname, "utf-8"), self.__datapoints, self.data, self.__clusters.centers.count, self.ncols, self.nrows, np.uint64(self.ncols * scale), np.uint64(self.nrows * scale) )
+        self.__write_png(b"img.png", self.__datapoints, self.data, self.__clusters.centers.count, self.ncols, self.nrows, np.uint64(self.ncols * scale), np.uint64(self.nrows * scale) )
 
     def __del__(self):
+        if not self.__datapoints is None:
+            self.__freeDatapoints(self.__datapoints, self.n)
         if not self.__clusters is None:
             self.__freeClusters(ct.pointer(self.__clusters))

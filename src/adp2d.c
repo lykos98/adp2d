@@ -1,5 +1,5 @@
 //include "../include/read_fof_snapshot.h"
-#include "../include/dadac.h"
+#include "../include/adp2d.h"
 #include <math.h>
 #include <omp.h>
 #include <stdint.h>
@@ -217,6 +217,79 @@ void DynamicArray_Init(lu_dynamicArray * a)
  * Clustering part *
  *******************/
 
+
+int cmp(const void * a, const void * b){
+    FLOAT_TYPE aa = *((FLOAT_TYPE*)a);
+    FLOAT_TYPE bb = *((FLOAT_TYPE*)b);
+    return 2*(aa > bb ) - 1; 
+}
+
+
+
+FLOAT_TYPE avg(const FLOAT_TYPE * x, const idx_t n)
+{
+    FLOAT_TYPE f = 0;
+    for(idx_t i = 0; i < n; ++i)
+    {
+        f += x[i];
+    }
+    return f/(FLOAT_TYPE)n;
+}
+
+
+
+FLOAT_TYPE mEst2(FLOAT_TYPE * x, FLOAT_TYPE *y, idx_t n)
+{
+
+    /********************************************
+     * Estimate the m coefficient of a straight *
+     * line passing through the origin          *
+     * params:                                  *
+     * - x: x values of the points              *
+     * - y: y values of the points              *
+     * - n: size of the arrays                  *
+     ********************************************/
+     
+
+    //FLOAT_TYPE x_avg, y_avg;
+    FLOAT_TYPE num = 0;
+    FLOAT_TYPE den = 0;
+    FLOAT_TYPE dd;
+    for(idx_t i = 0; i < n; ++i)
+    {
+        FLOAT_TYPE xx = x[i];
+        FLOAT_TYPE yy = y[i];
+
+        dd = xx;
+        num += dd*yy;
+        den += dd*dd;
+
+    }
+  
+    return num/den;
+}
+FLOAT_TYPE mEst(FLOAT_TYPE * x, FLOAT_TYPE *y, idx_t n)
+{
+    FLOAT_TYPE x_avg, y_avg;
+    x_avg = avg(x,n);
+    y_avg = avg(y,n);
+    FLOAT_TYPE num = 0;
+    FLOAT_TYPE den = 0;
+    FLOAT_TYPE dd;
+    for(idx_t i = 0; i < n - 1; ++i)
+    {
+        FLOAT_TYPE xx = x[i];
+        FLOAT_TYPE yy = y[i];
+
+        dd = (xx - x_avg);
+        num += dd*(yy - y_avg);
+        den += dd*dd;
+
+    }
+  
+    return num/den;
+}
+
 int cmpPP(const void* p1, const void *p2)
 {
     /***********************************************
@@ -304,47 +377,47 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
     #endif
 
     for(int i = 0; i < (int)nrows; ++i)
-        for(int j = 0; j < (int)ncols; ++j)
-        {   
-            /*
+    for(int j = 0; j < (int)ncols; ++j)
+    {   
+        /*
 
-            Find the centers of the clusters as the points of higher density in their neighborhoods
-            A point is tagged as a putative center if it is the point of higer density of its neighborhood 
-            
-            */
+        Find the centers of the clusters as the points of higher density in their neighborhoods
+        A point is tagged as a putative center if it is the point of higer density of its neighborhood 
+        
+        */
 
-            dpInfo_ptrs[i*ncols + j] = dpInfo + i*ncols + j;
-            int r = (int)dpInfo[i*ncols + j].kstar;
-            //int r = 50; 
-            FLOAT_TYPE gi = dpInfo[i*ncols + j].g;
-            dpInfo[i*ncols + j].is_center = mask[i*ncols + j] ? 1 : 0;
-            dpInfo[i*ncols + j].cluster_idx = -1;
-            //printf("%lf\n",p -> g);
-            int jjmin = j - r > 0 			? j - r : 0;  
-            int jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
+        dpInfo_ptrs[i*ncols + j] = dpInfo + i*ncols + j;
+        int r = (int)dpInfo[i*ncols + j].kstar;
+        //int r = 50; 
+        FLOAT_TYPE gi = dpInfo[i*ncols + j].g;
+        dpInfo[i*ncols + j].is_center = mask[i*ncols + j] ? 1 : 0;
+        dpInfo[i*ncols + j].cluster_idx = -1;
+        //printf("%lf\n",p -> g);
+		int jjmin = j - r > 0 			? j - r : 0;  
+		int jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
 
-            int iimin = i - r > 0 	 		? i - r : 0;  
-            int iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
-            
-            if(mask[i*ncols + j])
-            {
-                for(int ii = iimin; ii < iimax; ++ii)
-                for(int jj = jjmin; jj < jjmax; ++jj)
-                {
-                    idx_t ngbh_index = (idx_t)ii*ncols + jj; 
-                    FLOAT_TYPE gj = dpInfo[ngbh_index].g;
-                    if(gj > gi && mask[ngbh_index] && ((int)ngbh_index != (int)(i*ncols + j) )){
-                        dpInfo[i*ncols + j].is_center = 0;
-                        break;
-                    }
-                }
-            }
-            if(dpInfo[i*ncols + j].is_center && mask[i*ncols + j]){
-                    DynamicArray_pushBack(&allCenters, i*ncols + j);
-            }
-
-
+		int iimin = i - r > 0 	 		? i - r : 0;  
+		int iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
+		
+		if(mask[i*ncols + j])
+		{
+			for(int ii = iimin; ii < iimax; ++ii)
+			for(int jj = jjmin; jj < jjmax; ++jj)
+			{
+				idx_t ngbh_index = (idx_t)ii*ncols + jj; 
+				FLOAT_TYPE gj = dpInfo[ngbh_index].g;
+				if(gj > gi && mask[ngbh_index] && ((int)ngbh_index != (int)(i*ncols + j) )){
+					dpInfo[i*ncols + j].is_center = 0;
+					break;
+				}
+			}
+		}
+        if(dpInfo[i*ncols + j].is_center && mask[i*ncols + j]){
+                DynamicArray_pushBack(&allCenters, i*ncols + j);
         }
+
+
+    }
 
     #ifdef VERBOSE
         clock_gettime(CLOCK_MONOTONIC, &finish);
@@ -373,40 +446,39 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 			int j = (int)pp.array_idx % (int)ncols;
 			int r = (int)pp.kstar; //ATTENTION
 
+			int jjmin = j - r > 0 				? j - r : 0;  
+			int jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
+
+			int iimin = i - r > 0 	 			? i - r : 0;  
+			int iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
+			int flag = 0;
+			idx_t ppp = 0;
 			
 			if(mask[i*ncols + j])
 			{
-                int jjmin = j - r > 0 				? j - r : 0;  
-                int jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
-
-                int iimin = i - r > 0 	 			? i - r : 0;  
-                int iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
-                int flag = 0;
-                idx_t ppp = 0;
-
 				for(int ii = iimin; ii < iimax; ++ii)
-                    for(int jj = jjmin; jj < jjmax; ++jj)
-                    {
-                        idx_t jidx = ii*ncols + jj;
-                        if(dpInfo[jidx].is_center && pp.g > dpInfo[jidx].g && mask[jidx])
-                        {
-                            
-                            #pragma omp critical 
-                            {
-                                ppp = to_remove_mask[jidx];
-                                flag = ppp != MY_SIZE_MAX;							
-                                to_remove_mask[jidx] = flag ? (pp.g > dpInfo[ppp].g ? pp.array_idx : ppp) : pp.array_idx; 
-                            }
-                            
-                            //#pragma omp atomic read 
-                            //ppp = to_remove_mask[jidx];
+				for(int jj = jjmin; jj < jjmax; ++jj)
+				{
+					idx_t jidx = ii*ncols + jj;
+					if(dpInfo[jidx].is_center && pp.g > dpInfo[jidx].g && mask[jidx])
+					{
+						
+						#pragma omp critical 
+						{
+							ppp = to_remove_mask[jidx];
+							flag = ppp != MY_SIZE_MAX;							
+							to_remove_mask[jidx] = flag ? (pp.g > dpInfo[ppp].g ? pp.array_idx : ppp) : pp.array_idx; 
+						}
+						
+						//#pragma omp atomic read 
+						//ppp = to_remove_mask[jidx];
 
-                            //flag = ppp != MY_SIZE_MAX;							
-                            //
-                            //#pragma omp atomic write
-                            //to_remove_mask[jidx] = flag ? (pp.g > dpInfo[ppp].g ? pp.array_idx : ppp) : pp.array_idx; 
-                        }
-                    }
+						//flag = ppp != MY_SIZE_MAX;							
+						//
+						//#pragma omp atomic write
+						//to_remove_mask[jidx] = flag ? (pp.g > dpInfo[ppp].g ? pp.array_idx : ppp) : pp.array_idx; 
+					}
+				}
 			}
 		}
 	}
@@ -452,6 +524,122 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         }
     }
 
+
+	
+/*	
+    #pragma omp parallel
+    {
+            
+        idx_t * to_remove_private = (idx_t*)malloc(allCenters.count*sizeof(idx_t));
+    	for(idx_t c = 0; c < allCenters.count; ++c) {to_remove_private[c] = MY_SIZE_MAX;}
+
+        #pragma omp for
+        for(idx_t p = 0; p < nrows*ncols; ++p)
+        {
+        	Datapoint_info pp = *(dpInfo_ptrs[p]);
+			int i = (int)pp.array_idx / (int)ncols;
+			int j = (int)pp.array_idx % (int)ncols;
+			int r = (int)pp.kstar; //ATTENTION
+
+			int jjmin = j - r > 0 			? j - r : 0;  
+			int jjmax = j + r + 1 < ncols 	? j + r + 1 : ncols;  
+
+			int iimin = i - r > 0 	 		? i - r : 0;  
+			int iimax = i + r + 1 < nrows 	? i + r + 1 : nrows;  
+			
+			if(mask[i*ncols + j])
+			{
+				for(int ii = iimin; ii < iimax; ++ii)
+				for(int jj = jjmin; jj < jjmax; ++jj)
+				{
+					idx_t jidx = ii*ncols + jj;
+					if(dpInfo[jidx].is_center && pp.g > dpInfo[jidx].g && mask[jidx])
+					{
+						//dpInfo[jidx].is_center = 0;
+						for(idx_t c = 0; c < allCenters.count; ++c)
+						{
+							if(allCenters.data[c] == jidx)
+							{
+
+								if(to_remove_private[c] != MY_SIZE_MAX)
+								{
+									to_remove_private[c] = pp.g > 	dpInfo[to_remove_private[c]].g  ? pp.array_idx : to_remove_private[c];
+								}
+								else
+								{
+									to_remove_private[c] = pp.array_idx;
+								}
+							}
+						}
+					}
+				}
+			}
+        }
+        #pragma omp critical
+        {
+        	for(idx_t c = 0; c < allCenters.count; ++c)
+        	{
+        		if(to_remove_private[c] != MY_SIZE_MAX)
+			{
+				if(to_remove[c] != MY_SIZE_MAX)
+				{
+					to_remove[c] = dpInfo[to_remove_private[c]].g > dpInfo[to_remove[c]].g ?
+						       to_remove_private[c] : to_remove[c];
+				}
+				else
+				{
+					to_remove[c] = to_remove_private[c];
+				}
+			}
+        	}
+        }
+
+            free(to_remove_private);
+    }
+	
+
+	
+	
+    for(idx_t p = 0; p < allCenters.count; ++p)
+    {
+        idx_t i = allCenters.data[p];
+        int e = 0;
+        //FLOAT_TYPE gi = dpInfo[i].g;
+        idx_t mr = to_remove[p];
+        if(mr != MY_SIZE_MAX)
+        {
+            //if(dpInfo[mr].g > gi) e = 1;
+	    e = 1;
+        }
+        switch (e)
+        {
+            case 1:
+                {
+                    DynamicArray_pushBack(&removedCenters,i);
+                    dpInfo[i].is_center = 0;
+                    for(idx_t c = 0; c < removedCenters.count - 1; ++c)
+                    {
+                        if(mr == removedCenters.data[c])
+                        {
+                            mr = max_rho.data[c];
+                        }
+                    }
+                    DynamicArray_pushBack(&max_rho,mr);
+                    
+                }
+                break;
+            case 0:
+                {
+                    DynamicArray_pushBack(&actualCenters,i);
+                    dpInfo[i].cluster_idx = actualCenters.count - 1;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+	
+	*/
 	free(to_remove);
 	free(to_remove_mask);
 
@@ -484,7 +672,6 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 
 	
 	
-    long int minNgbhDist = nrows*nrows*ncols*ncols;
 	
 	#pragma omp parallel for schedule(dynamic)
     for(idx_t pidx = 0; pidx < nrows*ncols; ++pidx)
@@ -502,13 +689,14 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
             //int cluster = -1;
             //idx_t k = 0;
             //assign each particle at the same cluster as the nearest particle of higher density
-			jjmin = j - r > 0 ? j - r : 0;  
+			jjmin = j - r > 0 			? j - r : 0;  
 			jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
 
-			iimin = i - r > 0 ? i - r : 0;  
+			iimin = i - r > 0 	 		? i - r : 0;  
 			iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
 			
 			//int ii_toTakeFrom, jj_toTakeFrom;
+			long int minNgbhDist = nrows*nrows*ncols*ncols;
 			float_t g_current = dpInfo[i*ncols + j].g;
 			int foundFlag = 0;
 			for(int ii = iimin; ii < iimax; ++ii)
@@ -573,24 +761,117 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 	//printf("aa\n");
 	//#pragma omp parallel for schedule(dynamic)
 	for(int i = 0; i < (int)nrows; ++i)
-        for(int j = 0; j < (int)ncols; ++j)
+	for(int j = 0; j < (int)ncols; ++j)
+	{
+		idx_t pidx = dpInfo_ptrs[i*ncols + j] -> array_idx;
+		if(mask[pidx] && !(dpInfo[pidx].is_center))
+		{
+			idx_t idxToTakeFrom = fromWho[pidx];
+			//int cluster = dpInfo[idxToTakeFrom].cluster_idx;				
+			int cluster = -1;
+			while(cluster == -1)
+			{
+				cluster = dpInfo[idxToTakeFrom].cluster_idx;				
+				idxToTakeFrom = fromWho[idxToTakeFrom];
+			}
+			dpInfo[pidx].cluster_idx = cluster;
+		}
+	}
+	
+	
+/*	
+	
+    for(idx_t pidx = 0; pidx < nrows*ncols; ++pidx)
+    {   
+        Datapoint_info* p = dpInfo_ptrs[pidx];
+		int i = (int)(p -> array_idx) / ncols;
+		int j = (int)(p -> array_idx) % ncols;
+		//int r = p -> kstar + 1; //ATTENTION
+		int r = p -> kstar; //ATTENTION
+		//int r = 5; //ATTENTION
+		idx_t ggg;
+		int iimin, iimax, jjmin, jjmax;
+        //idx_t ele = p -> array_idx;
+        //fprintf(f,"%lu\n",ele);
+        if(!(p -> is_center) && mask[i*ncols + j])
         {
-            idx_t pidx = dpInfo_ptrs[i*ncols + j] -> array_idx;
-            if(mask[pidx] && !(dpInfo[pidx].is_center))
+            int cluster = -1;
+            idx_t k = 0;
+            idx_t p_idx;
+            //assign each particle at the same cluster as the nearest particle of higher density
+			jjmin = j - r > 0 				? j - r : 0;  
+			jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
+
+			iimin = i - r > 0 	 			? i - r : 0;  
+			iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
+			
+			int ii_toTakeFrom, jj_toTakeFrom;
+			long int minNgbhDist = nrows*nrows*ncols*ncols;
+			for(int ii = iimin; ii < iimax; ++ii)
+			for(int jj = jjmin; jj < jjmax; ++jj)
+			//Take the same cluster as the nearest neighbor with higher density
+			{
+				//take the ngbh
+				long int currentDist = (ii-i)*(ii-i) + (jj-j)*(jj-j);	
+				int notMySelf = (ii != i) || (jj != j);
+				//if(ii*ncols + j == 302000)
+				//{
+				//	printf("Nopeh\n");
+				//}
+				if(dpInfo[ii*ncols + jj].cluster_idx != -1 && notMySelf && currentDist < minNgbhDist)
+				{
+					minNgbhDist = currentDist;
+					p_idx = ii*ncols + jj;
+					ii_toTakeFrom = ii;
+					jj_toTakeFrom = jj;
+					cluster = dpInfo[p_idx].cluster_idx; 
+					ggg = p_idx;
+				}
+			}
+
+
+            //
+            if(cluster == -1)
             {
-                idx_t idxToTakeFrom = fromWho[pidx];
-                //int cluster = dpInfo[idxToTakeFrom].cluster_idx;				
-                int cluster = -1;
-                while(cluster == -1)
+                FLOAT_TYPE gmax = -99999.;               
+                idx_t gm_index = 0;
+
+				for(int ii = iimin; ii < iimax; ++ii)
+				for(int jj = jjmin; jj < jjmax; ++jj)
                 {
-                    cluster = dpInfo[idxToTakeFrom].cluster_idx;				
-                    idxToTakeFrom = fromWho[idxToTakeFrom];
+                    idx_t ngbh_index = ii*ncols + jj;
+                    for(idx_t m = 0; m < removedCenters.count; ++m)
+                    {
+                        FLOAT_TYPE gcand = dpInfo[max_rho.data[m]].g;
+                        if(ngbh_index == removedCenters.data[m] && gcand > gmax)
+                        {   
+                            //printf("%lu -- %lu\n", ele, m);
+                            gmax = gcand;
+                            gm_index = max_rho.data[m];
+							ggg = p_idx;
+                        }
+                    }
                 }
-                dpInfo[pidx].cluster_idx = cluster;
+
+                cluster = dpInfo[gm_index].cluster_idx;
+
             }
+            p -> cluster_idx = cluster;
+//			if(fromWho[i*ncols + j] != ggg) printf("Nope in %lu got m1 %lu mog %lu\n", 
+					i*ncols + j, 
+					fromWho[i*ncols + j], ggg); 
+			if(cluster == -1) mask[i*ncols + j] = 0;
+
+
         }
+	}
+
+
+*/
 	
-	
+
+    
+
     #ifdef VERBOSE
         clock_gettime(CLOCK_MONOTONIC, &finish);
         elapsed = (finish.tv_sec - start.tv_sec);
@@ -1593,6 +1874,13 @@ void Heuristic3(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, int hal
 	}
 }
 
+
+
+void freeDatapointArray(Datapoint_info* d, size_t n)
+{
+    free(d);
+}
+
 int FloatAndUintSize()
 {
 	int v = 0;
@@ -1601,6 +1889,20 @@ int FloatAndUintSize()
 	v = vf + vi*2;
 	return v;
 }
+
+
+void setRhoErrK(Datapoint_info* points, FLOAT_TYPE* rho, FLOAT_TYPE* rhoErr, idx_t* k, size_t n)
+{
+	for(size_t i = 0; i < n; ++i)
+	{
+		points[i].log_rho = rho[i];
+		points[i].log_rho_err = rhoErr[i];
+		points[i].g = points[i].log_rho - points[i].log_rho_err;
+		points[i].kstar = k[i];
+	}
+	return;
+}
+
 
 Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, int ncols, int rmax) { //use it to prune isolated pixels
     struct timespec start_tot, finish_tot;
@@ -1778,20 +2080,12 @@ void tiny_colorize(
             
         }
     
-     if(target_height != og_height || target_width != og_width)
-     {
-         unsigned char* out_pixels = stbir_resize_uint8_srgb( img_buffer,  2 * og_width,  og_height,  0,
-                 NULL, 2 * target_width, target_height, 0,
-                 STBIR_RGB);
-         stbi_write_png(fname, 2 * target_width, target_height, 3, out_pixels, 0);
-         free(out_pixels);
-     }
-     else
-     {
-         stbi_write_png(fname, 2 * target_width, target_height, 3, img_buffer, 0);
-     }
-
+     unsigned char* out_pixels = stbir_resize_uint8_srgb( img_buffer,  2 * og_width,  og_height,  0,
+                                                  NULL, 2 * target_width, target_height, 0,
+                                                  STBIR_RGB);
+     stbi_write_png(fname, 2 * target_width, target_height, 3, out_pixels, 0);
    
+     free(out_pixels);
      free(img_buffer);
      free(palette);
     
