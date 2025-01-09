@@ -1,6 +1,10 @@
 import ctypes as ct
 import numpy as np  
 import os
+import time
+from scipy.ndimage import center_of_mass
+from concurrent.futures import ThreadPoolExecutor
+
 
 ctFloatType = ct.c_double
 ctIdxType = ct.c_uint64
@@ -216,67 +220,6 @@ class Data():
         self.__datapoints = self.__computeDensityFromImg(img,mask, img.shape[0], img.shape[1], r)
         self.state["density"] = True
 
-    def computeNeighbors_kdtree(self, k : int):
-        
-        """Compute the k nearest neighbors of each point
-
-        Args:
-            k (int): Number of neighbors to compute for each point 
-            alg (str): default "kd" for kdtree else choose "vp" for vptree
-        """
-        self.k = k
-        self.__datapoints = self.__NgbhSearch_kdtree(self.data, self.n, self.dims, self.k)
-        #Datapoint_info* NgbhSearch_vpTree(void* data, size_t n, size_t byteSize, size_t dims, size_t k, float_t (*metric)(void *, void *));
-        self.state["ngbh"] = True
-        self.neighbors = None
-
-    def computeAvgOverNgbh(self, vals, error,k):
-        retVals = np.zeros_like(vals)
-        retError = np.zeros_like(error)
-        self.__computeAvg(self.__datapoints, retVals, retError, vals, error, k, self.n)
-        return retVals, retError
-
-    def computeNeighbors_vptree(self, k : int, alg="kd"):
-        
-        """Compute the k nearest neighbors of each point
-
-        Args:
-            k (int): Number of neighbors to compute for each point 
-            alg (str): default "kd" for kdtree else choose "vp" for vptree
-        """
-        self.k = k
-        #Datapoint_info* NgbhSearch_vpTree(void* data, size_t n, size_t byteSize, size_t dims, size_t k, float_t (*metric)(void *, void *));
-        self.__datapoints = self.__NgbhSearch_vptree(self.data.ctypes.data, self.n, self.data.itemsize, self.dims, self.k, self.__eud)
-        self.state["ngbh"] = True
-        self.neighbors = None
-
-    def computeIDtwoNN(self):
-
-        """ Compute the intrinsic dimension of the dataset via the TWO Nearest Neighbors method.
-            Ref. paper 
-
-        Raises:
-            ValueError: Raises value error if neighbors are not computed yet, use `Data.computeNeighbors()` 
-        """
-
-        if not self.state["ngbh"]:
-            raise ValueError("Please compute Neighbors before calling this function")
-        self.id = self.__idEstimate(self.__datapoints,self.n)
-        self.state["id"] = True
-
-    def computeDensity(self):
-
-        """Compute density value for each point
-
-        Raises:
-            ValueError: Raises value error if ID is not computed, use `Data.computeIDtwoNN` method
-        """
-        if not self.state["id"]:
-            raise ValueError("Please compute ID before calling this function")
-        self.__computeRho(self.__datapoints, self.id, self.n)
-        self.state["density"] = True
-        self.density = None
-        self.densityError = None
 
     def computeClusteringADP(self,Z : float, halo = True, useSparse = "auto"):
 
@@ -391,32 +334,73 @@ class Data():
                 raise ValueError("Density Error is not computed yet")
         else:
             return self.densityError
-    
-    def getNeighbors(self) -> list:
-        """Retrieve k Nearest Neighbors of each point and their associated distance
-
-        Raises:
-            ValueError: Raise error if neighbors are not computed, use `Data.computeNeighbors(k)` 
-
-        Returns:
-            Returns lists of neighbors and distances            
-        """
-        if self.neighbors is None:
-            if self.state["ngbh"]:
-                self.neighbors = (
-                            np.array([[int(self.__datapoints[j].ngbh.data[kk].array_idx) for kk in range(self.k)] for j in range(self.n)]),
-                            np.array([[float(self.__datapoints[j].ngbh.data[kk].value)**(0.5) for kk in range(self.k)] for j in range(self.n)])
-                        )
-                return self.neighbors
-            else:
-                raise ValueError("Density is not computed yet")
-        else:
-            return self.neighbors
 
     def setRhoErrK(self, rho, err, k):
         self.__setRhoErrK(self.__datapoints, rho, err, k, self.n)
         self.state["density"] = True
         return
+
+    def __computeSourceProperties(segmentation_map, label):
+        if label == -1:
+            return None
+        
+        #mask = (segmentation_map_dadaC_cut_out == label)
+        mask = (segmentation_map == label)
+        com  = center_of_mass(mask)
+
+        # Calculate the covariance matrix of the pixel coordinates
+        y, x   = np.nonzero(mask)
+        x      = x - com[1]
+        y      = y - com[0]
+        coords = np.vstack((x, y))
+
+        # Check if the coords array has any zero columns
+        if np.any(np.all(coords == 0, axis=0)):
+            return None
+        
+        area = np.sum(mask)
+
+        # Calculate covariance matrix
+        cov = np.cov(coords)
+
+        # Compute the eigenvalues of the covariance matrix
+        eigenvectors, eigenvalues, V = np.linalg.svd(cov, full_matrices=True)
+        ind                          = np.argsort(eigenvalues)[::-1]
+        eigenvalues                  = eigenvalues[ind]
+        eigenvectors                 = eigenvectors[:, ind]
+
+        # Asterism like ellipticity
+        sig_x       = np.sqrt(eigenvalues[0])
+        sig_y       = np.sqrt(eigenvalues[1])
+        a_image     = np.sqrt(sig_x * sig_x + sig_y * sig_y)
+        b_image     = sig_y / sig_x * a_image
+        ellipticity = (a_image - b_image) / a_image
+
+        # Asterism like PA
+        semi_major_angle = np.rad2deg(np.arctan2(eigenvectors[0][1], eigenvectors[0][0]))
+
+        return com[1], com[0], area, ellipticity, b_image, a_image, semi_major_angle
+
+    def computeSourcesProperties():
+        start = time.time()
+        print("Computing sources properties")
+        self.getClusterAssignment()
+        # Get unique labels in dadaC segmentation map
+        unique_labels = np.unique(self.clusterAssignment)
+        segmentation_map = self.clusterAssignment.reshape((self.nrows, self.ncols))
+
+        # Use ThreadPoolExecutor to parallelize the computation
+        with ThreadPoolExecutor() as executor:
+            self.sources_properties = list(executor.map(lambda x: calculate_properties(segmentation_map,x), unique_labels))
+        self.source_properties = [r for r in self.source_properties if r is not None]
+        self.source_properties = zip(*self.source_properties)
+        
+        stop = time.time()
+        print(f"\tElapsed time: {stop - start:.2f}")
+
+        return self.sources_properties
+
+
 
     def writePNG(self,fname, scale = 0.5):
         max_allowed_dim = 4000
