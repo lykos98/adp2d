@@ -381,7 +381,7 @@ class Data():
 
         return com[1], com[0], area, ellipticity, b_image, a_image, semi_major_angle
 
-    def computeSourcesProperties():
+    def computeSourcesProperties(self):
         start = time.time()
         print("Computing sources properties")
         self.getClusterAssignment()
