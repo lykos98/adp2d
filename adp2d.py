@@ -340,7 +340,7 @@ class Data():
         self.state["density"] = True
         return
 
-    def __computeSourceProperties(segmentation_map, label):
+    def __computeSourceProperties(self,segmentation_map, label):
         if label == -1:
             return None
         
@@ -391,7 +391,7 @@ class Data():
 
         # Use ThreadPoolExecutor to parallelize the computation
         with ThreadPoolExecutor() as executor:
-            self.sources_properties = list(executor.map(lambda x: calculate_properties(segmentation_map,x), unique_labels))
+            self.sources_properties = list(executor.map(lambda x: self.__computeSourceProperties(segmentation_map,x), unique_labels))
         self.source_properties = [r for r in self.source_properties if r is not None]
         self.source_properties = zip(*self.source_properties)
         
