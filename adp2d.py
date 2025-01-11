@@ -421,7 +421,7 @@ class Data():
         self.getClusterAssignment()
         # Get unique labels in dadaC segmentation map
         unique_labels = np.unique(self.clusterAssignment)
-        segmentation_map = self.clusterAssignment.reshape((self.nrows, self.ncols)).astypr(np.int32)
+        segmentation_map = self.clusterAssignment.reshape((self.nrows, self.ncols)).astype(np.int32)
         
 
 
