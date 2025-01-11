@@ -450,13 +450,13 @@ class Data():
         _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
         #print(coms)
         f = np.where(areas > 1.)
-        self.source_properties = {}
-        self.source_properties["centers_of_mass"]   = coms[f].T
-        self.source_properties["areas"]             = areas[f]
-        self.source_properties["ellipticities"]     = ellipticities[f]
-        self.source_properties["major_axes"]        = b_images[f]
-        self.source_properties["minor_axes"]        = a_images[f]
-        self.source_properties["semi_major_angles"] = semi_major_angles[f]
+        self.sources_properties = {}
+        self.sources_properties["centers_of_mass"]   = coms[f].T
+        self.sources_properties["areas"]             = areas[f]
+        self.sources_properties["ellipticities"]     = ellipticities[f]
+        self.sources_properties["major_axes"]        = b_images[f]
+        self.sources_properties["minor_axes"]        = a_images[f]
+        self.sources_properties["semi_major_angles"] = semi_major_angles[f]
 
         stop = time.time()
         print(f"\tElapsed time: {stop - start:.2f}")
