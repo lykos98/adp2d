@@ -421,19 +421,18 @@ class Data():
         self.getClusterAssignment()
         # Get unique labels in dadaC segmentation map
         unique_labels = np.unique(self.clusterAssignment)
-        segmentation_map = self.clusterAssignment.reshape((self.nrows, self.ncols))
+        segmentation_map = self.clusterAssignment.reshape((self.nrows, self.ncols)).astypr(np.int32)
         
 
 
-        label_idx = np.array([0 for _ in range(max(unique_labels_dadaC + 1))], dtype = np.int32)
+        label_idx = np.array([0 for _ in range(max(unique_labels + 1))], dtype = np.int32)
 
         print(unique_labels_dadaC)
-        for i,l in enumerate(unique_labels_dadaC[1:]):
+        for i,l in enumerate(unique_labels[1:]):
             label_idx[l] = i
 
 
-        nlabs = len(unique_labels_dadaC) - 1
-        segmentation_map_dadaC_cut_out = segmentation_map_dadaC_cut_out.astype(np.int32)
+        nlabs = len(unique_labels) - 1
 
         coms = np.zeros((nlabs,2), dtype = np.float32)
         covariance_matrices = np.zeros((nlabs,2,2), dtype = np.float32)
@@ -445,7 +444,7 @@ class Data():
 
         # Use ThreadPoolExecutor to parallelize the computation
 
-        self.__compute_coms_and_covs(segmentation_map_dadaC_cut_out, label_idx, coms, areas, covariance_matrices)
+        self.__compute_coms_and_covs(segmentation_map, label_idx, coms, areas, covariance_matrices)
         self.__compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
         #print(coms)
         f = np.where(areas > 1.)
