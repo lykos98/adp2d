@@ -83,7 +83,7 @@ class Clusters(ct.Structure):
 
 
 @numba.njit
-def __compute_coms_and_covs(segmentation_map: np.array, label_idx: np.array, coms: np.array, areas: np.array, covariance_matrices: np.array):
+def _compute_coms_and_covs(segmentation_map: np.array, label_idx: np.array, coms: np.array, areas: np.array, covariance_matrices: np.array):
     """
         segmentation_map: np.array( nrows, ncols )
         label_idx: map from label to the correct index
@@ -130,7 +130,7 @@ def __compute_coms_and_covs(segmentation_map: np.array, label_idx: np.array, com
             covariance_matrices[lab_idx,:,:] = covariance_matrices[lab_idx,:,:]/(areas[lab_idx] - 1)
 
 @numba.njit(parallel = True)
-def __compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles):
+def _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles):
     nlabels = covariance_matrices.shape[0]
     for i in numba.prange(nlabels):
         if areas[i] > 1:
@@ -446,8 +446,8 @@ class Data():
 
         # Use ThreadPoolExecutor to parallelize the computation
 
-        __compute_coms_and_covs(segmentation_map, label_idx, coms, areas, covariance_matrices)
-        __compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
+        _compute_coms_and_covs(segmentation_map, label_idx, coms, areas, covariance_matrices)
+        _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
         #print(coms)
         f = np.where(areas > 1.)
         self.source_properties = {}
