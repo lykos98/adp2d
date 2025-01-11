@@ -62,7 +62,6 @@ class SparseBorder_t(ct.Structure):
         ("error", ctFloatType)
     ]
 
-data.compute_id_2NN()
 class AdjList(ct.Structure):
     _fields_ = [
         ("count", ctIdxType),
