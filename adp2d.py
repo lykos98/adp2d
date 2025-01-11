@@ -80,6 +80,81 @@ class Clusters(ct.Structure):
         ("n", ctIdxType)
     ]
 
+
+
+@numba.njit
+def __compute_coms_and_covs(segmentation_map: np.array, label_idx: np.array, coms: np.array, areas: np.array, covariance_matrices: np.array):
+    """
+        segmentation_map: np.array( nrows, ncols )
+        label_idx: map from label to the correct index
+        coms: np.array( nlabels, 2 )
+        areas: np.array( nlabels )
+        covariance_matrices: np.array( nlabels, 2, 2)
+    """
+    
+    xrange  = segmentation_map.shape[1]
+    yrange  = segmentation_map.shape[0]
+    nlabels = coms.shape[0] 
+
+    for xx in range(xrange):
+        for yy in range(yrange):
+            lab = segmentation_map[yy,xx] 
+            if lab != -1:
+                lab_idx = label_idx[lab]
+                coms[lab_idx,0] += float(xx)
+                coms[lab_idx,1] += float(yy)
+                areas[lab_idx]  += 1.
+                #numba.cuda.atomic.add(coms,(lab,0),xx)
+                #numba.cuda.atomic.add(coms,(lab,1),yy)
+                #numba.cuda.atomic.add(areas,lab,xx)
+
+    for lab_idx in range(nlabels):
+        if areas[lab_idx] > 1:
+            coms[lab_idx] = coms[lab_idx]/areas[lab_idx]
+
+    for xx in range(xrange):
+        for yy in range(yrange):
+            lab = segmentation_map[yy,xx] 
+            if lab != -1:
+                lab_idx = label_idx[lab]
+                
+                x_n = float(xx) - coms[lab_idx,0]
+                y_n = float(yy) - coms[lab_idx,1]
+                covariance_matrices[lab_idx, 0, 0] += x_n ** 2
+                covariance_matrices[lab_idx, 0, 1] += x_n * y_n
+                covariance_matrices[lab_idx, 1, 0] += x_n * y_n
+                covariance_matrices[lab_idx, 1, 1] += y_n ** 2
+                
+    for lab_idx in range(nlabels):
+        if areas[lab_idx] > 1:
+            covariance_matrices[lab_idx,:,:] = covariance_matrices[lab_idx,:,:]/(areas[lab_idx] - 1)
+
+@numba.njit(parallel = True)
+def __compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles):
+    nlabels = covariance_matrices.shape[0]
+    for i in numba.prange(nlabels):
+        if areas[i] > 1:
+            cov = covariance_matrices[i]
+            eigenvectors, eigenvalues, V = np.linalg.svd(cov, full_matrices=True)
+            ind                          = np.argsort(eigenvalues)[::-1]
+            eigenvalues                  = eigenvalues[ind]
+            eigenvectors                 = eigenvectors[:, ind]
+        
+            # Asterism like ellipticity
+            sig_x       = np.sqrt(eigenvalues[0])
+            sig_y       = np.sqrt(eigenvalues[1])
+            a_image     = np.sqrt(sig_x * sig_x + sig_y * sig_y)
+            b_image     = sig_y / sig_x * a_image
+            ellipticity = (a_image - b_image) / a_image
+    
+            # Asterism like PA
+            semi_major_angle = np.rad2deg(np.arctan2(eigenvectors[0][1], eigenvectors[0][0]))
+    
+            a_images[i] = a_image
+            b_images[i] = b_image
+            ellipticities[i] = ellipticity
+            semi_major_angles[i] = semi_major_angle
+
 class Data():
     def __init__(self, data : np.array):
         """Data object for dadaC library
@@ -341,78 +416,6 @@ class Data():
         self.state["density"] = True
         return
 
-    @numba.njit
-    def __compute_coms_and_covs(self, segmentation_map: np.array, label_idx: np.array, coms: np.array, areas: np.array, covariance_matrices: np.array):
-        """
-            segmentation_map: np.array( nrows, ncols )
-            label_idx: map from label to the correct index
-            coms: np.array( nlabels, 2 )
-            areas: np.array( nlabels )
-            covariance_matrices: np.array( nlabels, 2, 2)
-        """
-        
-        xrange  = segmentation_map.shape[1]
-        yrange  = segmentation_map.shape[0]
-        nlabels = coms.shape[0] 
-
-        for xx in range(xrange):
-            for yy in range(yrange):
-                lab = segmentation_map[yy,xx] 
-                if lab != -1:
-                    lab_idx = label_idx[lab]
-                    coms[lab_idx,0] += float(xx)
-                    coms[lab_idx,1] += float(yy)
-                    areas[lab_idx]  += 1.
-                    #numba.cuda.atomic.add(coms,(lab,0),xx)
-                    #numba.cuda.atomic.add(coms,(lab,1),yy)
-                    #numba.cuda.atomic.add(areas,lab,xx)
-
-        for lab_idx in range(nlabels):
-            if areas[lab_idx] > 1:
-                coms[lab_idx] = coms[lab_idx]/areas[lab_idx]
-
-        for xx in range(xrange):
-            for yy in range(yrange):
-                lab = segmentation_map[yy,xx] 
-                if lab != -1:
-                    lab_idx = label_idx[lab]
-                    
-                    x_n = float(xx) - coms[lab_idx,0]
-                    y_n = float(yy) - coms[lab_idx,1]
-                    covariance_matrices[lab_idx, 0, 0] += x_n ** 2
-                    covariance_matrices[lab_idx, 0, 1] += x_n * y_n
-                    covariance_matrices[lab_idx, 1, 0] += x_n * y_n
-                    covariance_matrices[lab_idx, 1, 1] += y_n ** 2
-                    
-        for lab_idx in range(nlabels):
-            if areas[lab_idx] > 1:
-                covariance_matrices[lab_idx,:,:] = covariance_matrices[lab_idx,:,:]/(areas[lab_idx] - 1)
-
-    @numba.njit(parallel = True)
-    def __compute_cov_properties(self,covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles):
-        nlabels = covariance_matrices.shape[0]
-        for i in numba.prange(nlabels):
-            if areas[i] > 1:
-                cov = covariance_matrices[i]
-                eigenvectors, eigenvalues, V = np.linalg.svd(cov, full_matrices=True)
-                ind                          = np.argsort(eigenvalues)[::-1]
-                eigenvalues                  = eigenvalues[ind]
-                eigenvectors                 = eigenvectors[:, ind]
-            
-                # Asterism like ellipticity
-                sig_x       = np.sqrt(eigenvalues[0])
-                sig_y       = np.sqrt(eigenvalues[1])
-                a_image     = np.sqrt(sig_x * sig_x + sig_y * sig_y)
-                b_image     = sig_y / sig_x * a_image
-                ellipticity = (a_image - b_image) / a_image
-        
-                # Asterism like PA
-                semi_major_angle = np.rad2deg(np.arctan2(eigenvectors[0][1], eigenvectors[0][0]))
-        
-                a_images[i] = a_image
-                b_images[i] = b_image
-                ellipticities[i] = ellipticity
-                semi_major_angles[i] = semi_major_angle
 
 
     def computeSourcesProperties(self):
@@ -443,8 +446,8 @@ class Data():
 
         # Use ThreadPoolExecutor to parallelize the computation
 
-        self.__compute_coms_and_covs(segmentation_map, label_idx, coms, areas, covariance_matrices)
-        self.__compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
+        __compute_coms_and_covs(segmentation_map, label_idx, coms, areas, covariance_matrices)
+        __compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
         #print(coms)
         f = np.where(areas > 1.)
         self.source_properties = {}
