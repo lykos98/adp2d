@@ -450,7 +450,7 @@ class Data():
         #print(coms)
         f = np.where(areas > 1.)
         self.source_properties = {}
-        self.source_properties["centers_of_mass"]   = coms[f]
+        self.source_properties["centers_of_mass"]   = coms[f].T
         self.source_properties["areas"]             = areas[f]
         self.source_properties["ellipticities"]     = ellipticities[f]
         self.source_properties["major_axes"]        = b_images[f]
