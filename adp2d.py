@@ -4,6 +4,7 @@ import os
 import time
 from scipy.ndimage import center_of_mass
 from concurrent.futures import ThreadPoolExecutor
+import numba
 
 
 ctFloatType = ct.c_double
