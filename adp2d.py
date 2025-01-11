@@ -427,7 +427,6 @@ class Data():
 
         label_idx = np.array([0 for _ in range(max(unique_labels + 1))], dtype = np.int32)
 
-        print(unique_labels_dadaC)
         for i,l in enumerate(unique_labels[1:]):
             label_idx[l] = i
 
