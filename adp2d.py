@@ -418,7 +418,7 @@ class Data():
 
 
 
-    def computeSourcesProperties(self):
+    def computeSourcesProperties(self, min_area = 10):
         start = time.time()
         print("Computing sources properties")
         self.getClusterAssignment()
@@ -449,17 +449,17 @@ class Data():
         _compute_coms_and_covs(segmentation_map, label_idx, coms, areas, covariance_matrices)
         _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
         #print(coms)
-        f = np.where(areas > 1.)
+        f = np.where(areas > min_area)
         self.sources_properties = {}
         self.sources_properties["centers_of_mass"]   = coms[f].T
         self.sources_properties["areas"]             = areas[f]
         self.sources_properties["ellipticities"]     = ellipticities[f]
         self.sources_properties["major_axes"]        = b_images[f]
         self.sources_properties["minor_axes"]        = a_images[f]
-        self.sources_properties["semi_major_angles"] = semi_major_angles[f]
+        self.sources_properties["position_angles"]   = semi_major_angles[f]
 
         stop = time.time()
-        print(f"\tElapsed time: {stop - start:.2f}")
+        print(f"\tElapsed time: {stop - start:.2f}s")
 
         return self.sources_properties
 
