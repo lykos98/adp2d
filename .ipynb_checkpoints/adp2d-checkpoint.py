@@ -215,11 +215,11 @@ class Data():
 
 
         self.__computeCorrection = self.lib.computeCorrection
-        self.__computeCorrection.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), ctIdxType, ct.c_double]
+        self.__computeCorrection.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(np.int32), ctIdxType, ct.c_double]
 
         self.__H1 = self.lib.Heuristic1
         #Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols);
-        self.__H1.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), ct.c_int32, ct.c_int32]
+        self.__H1.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(np.int32), ct.c_int32, ct.c_int32]
         self.__H1.restype = Clusters
 
         self.__ClustersAllocate = self.lib.Clusters_allocate
@@ -228,7 +228,7 @@ class Data():
         self.__H2 = self.lib.Heuristic2
         #void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols);
         self.__H2.argtypes = [ct.POINTER(Clusters), ct.POINTER(DatapointInfo), 
-                              np.ctypeslib.ndpointer(ct.c_int32), ct.c_uint64, ct.c_uint64]
+                              np.ctypeslib.ndpointer(np.int32), ct.c_uint64, ct.c_uint64]
 
         self.__H3 = self.lib.Heuristic3
         self.__H3.argtypes = [ct.POINTER(Clusters), ct.POINTER(DatapointInfo), ct.c_double, ct.c_int]
@@ -323,11 +323,8 @@ class Data():
         self.state["computeHalo"] = halo 
         self.Z = Z
         self.n = np.prod(self.img.shape)
-        print("aaaa")
         self.__computeCorrection(self.__datapoints, self.mask, self.n, self.Z)
-        print("Correction")
         self.__clusters = self.__H1(self.__datapoints, self.mask, self.nrows, self.ncols)
-        print("H1")
         self.__ClustersAllocate(ct.pointer(self.__clusters), 1)
         self.__H2(ct.pointer(self.__clusters), self.__datapoints, self.mask, self.nrows, self.ncols)
         self.__H3(ct.pointer(self.__clusters), self.__datapoints, self.Z, 1 if halo else 0 )

@@ -339,6 +339,119 @@ void computeCorrection(Datapoint_info* dpInfo, int* mask, idx_t n, FLOAT_TYPE Z)
     //printf("%lf\n",min_log_rho);
 }
 
+Clusters Heuristic1_2(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols)
+{
+    struct timespec start_tot, finish_tot;
+    double elapsed_tot;
+
+    printf("H1: Preliminary cluster assignment\n");
+    clock_gettime(CLOCK_MONOTONIC, &start_tot);
+
+    //idx_t ncenters = 0;
+    //idx_t putativeCenters = n;
+    lu_dynamicArray allCenters, removedCenters, actualCenters, max_rho;
+    DynamicArray_allocate(&allCenters);
+    DynamicArray_allocate(&removedCenters);
+    DynamicArray_allocate(&actualCenters);
+    DynamicArray_allocate(&max_rho);
+
+    Datapoint_info** dpInfo_ptrs = (Datapoint_info**)malloc(nrows*ncols*sizeof(Datapoint_info*));
+
+    struct timespec start, finish;
+    double elapsed;
+
+    #ifdef VERBOSE
+        clock_gettime(CLOCK_MONOTONIC, &start);
+    #endif
+
+    for(int i = 0; i < (int)nrows; ++i)
+    for(int j = 0; j < (int)ncols; ++j)
+    {   
+        /*
+
+        Find the centers of the clusters as the points of higher density in their neighborhoods
+        A point is tagged as a putative center if it is the point of higer density of its neighborhood 
+        
+        */
+
+        dpInfo_ptrs[i*ncols + j] = dpInfo + i*ncols + j;
+        int r = (int)dpInfo[i*ncols + j].kstar;
+        //int r = 50; 
+        FLOAT_TYPE gi = dpInfo[i*ncols + j].g;
+        dpInfo[i*ncols + j].is_center = mask[i*ncols + j] ? 1 : 0;
+        dpInfo[i*ncols + j].cluster_idx = -1;
+        //printf("%lf\n",p -> g);
+		int jjmin = j - r > 0 			    ? j - r : 0;  
+		int jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
+
+		int iimin = i - r > 0 	 		    ? i - r : 0;  
+		int iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
+		
+		if(mask[i*ncols + j])
+		{
+			for(int ii = iimin; ii < iimax; ++ii)
+			for(int jj = jjmin; jj < jjmax; ++jj)
+			{
+				idx_t ngbh_index = (idx_t)ii*ncols + jj; 
+				FLOAT_TYPE gj = dpInfo[ngbh_index].g;
+				if(gj > gi && mask[ngbh_index] && ((int)ngbh_index != (int)(i*ncols + j) )){
+					dpInfo[i*ncols + j].is_center = 0;
+					break;
+				}
+			}
+		}
+        if(dpInfo[i*ncols + j].is_center && mask[i*ncols + j]){
+                DynamicArray_pushBack(&allCenters, i*ncols + j);
+        }
+
+
+    }
+
+	qsort(dpInfo_ptrs, nrows*ncols, sizeof(Datapoint_info*), cmpPP);
+
+    idx_t * to_remove = (idx_t*)malloc(allCenters.count*sizeof(idx_t));
+    for(idx_t c = 0; c < allCenters.count; ++c) {to_remove[c] = MY_SIZE_MAX;}
+
+	idx_t* to_remove_mask = (idx_t*)malloc(nrows*ncols*sizeof(idx_t));
+    for(idx_t p = 0; p < nrows*ncols; ++p) {to_remove_mask[p] = MY_SIZE_MAX;}
+
+    #pragma omp parallel 
+    {
+        #pragma omp for
+        for(idx_t p = 0; p < nrows*ncols; ++p)
+        {
+        	Datapoint_info pp = *(dpInfo_ptrs[p]);
+			int i = (int)pp.array_idx / (int)ncols;
+			int j = (int)pp.array_idx % (int)ncols;
+			int r = (int)pp.kstar; //ATTENTION
+
+			int jjmin = j - r > 0 				? j - r : 0;  
+			int jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
+
+			int iimin = i - r > 0 	 			? i - r : 0;  
+			int iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
+			int flag = 0;
+			idx_t ppp = 0;
+			if(mask[i*ncols + j])
+			{
+				for(int ii = iimin; ii < iimax; ++ii)
+				for(int jj = jjmin; jj < jjmax; ++jj)
+				{
+					idx_t jidx = ii*ncols + jj;
+					if(dpInfo[jidx].is_center && pp.g > dpInfo[jidx].g && mask[jidx])
+					{
+						
+					}
+				}
+			}
+			
+		}
+	}
+	
+   Clusters c; 
+   return c;
+}
+
 //Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, int nrows, int ncols)
 Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols)
 {
@@ -393,10 +506,10 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         dpInfo[i*ncols + j].is_center = mask[i*ncols + j] ? 1 : 0;
         dpInfo[i*ncols + j].cluster_idx = -1;
         //printf("%lf\n",p -> g);
-		int jjmin = j - r > 0 			? j - r : 0;  
+		int jjmin = j - r > 0 			    ? j - r : 0;  
 		int jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
 
-		int iimin = i - r > 0 	 		? i - r : 0;  
+		int iimin = i - r > 0 	 		    ? i - r : 0;  
 		int iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
 		
 		if(mask[i*ncols + j])
@@ -463,20 +576,20 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 					if(dpInfo[jidx].is_center && pp.g > dpInfo[jidx].g && mask[jidx])
 					{
 						
+                        // this critical makes jupyter crash ostia
 						#pragma omp critical 
 						{
 							ppp = to_remove_mask[jidx];
-							flag = ppp != MY_SIZE_MAX;							
-							to_remove_mask[jidx] = flag ? (pp.g > dpInfo[ppp].g ? pp.array_idx : ppp) : pp.array_idx; 
+							if(ppp != MY_SIZE_MAX)					
+                            {
+                                to_remove_mask[jidx] = pp.g > dpInfo[ppp].g ? pp.array_idx : ppp;
+                            }
+                            else
+                            {
+                                to_remove_mask[jidx] = pp.array_idx; 
+                            }
 						}
 						
-						//#pragma omp atomic read 
-						//ppp = to_remove_mask[jidx];
-
-						//flag = ppp != MY_SIZE_MAX;							
-						//
-						//#pragma omp atomic write
-						//to_remove_mask[jidx] = flag ? (pp.g > dpInfo[ppp].g ? pp.array_idx : ppp) : pp.array_idx; 
 					}
 				}
 			}
@@ -885,7 +998,7 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
     free(max_rho.data);
     free(removedCenters.data);
     free(allCenters.data);
-
+    free(fromWho);
 
     Clusters c_all;
     c_all.centers = actualCenters;
@@ -1100,10 +1213,11 @@ int compare_merging_density( const void *A, const void *B)
 }
 
 
-inline int is_a_merging( FLOAT_TYPE dens1, FLOAT_TYPE dens1_err,
-			 FLOAT_TYPE dens2, FLOAT_TYPE dens2_err,
-			 FLOAT_TYPE dens_border, FLOAT_TYPE dens_border_err,
-			 FLOAT_TYPE Z)
+static inline int is_a_merging( 
+                FLOAT_TYPE dens1, FLOAT_TYPE dens1_err,
+                FLOAT_TYPE dens2, FLOAT_TYPE dens2_err,
+                FLOAT_TYPE dens_border, FLOAT_TYPE dens_border_err,
+                FLOAT_TYPE Z)
 /*
  * dens1 : the density of the particle that is the center of the first cluster
  * dens2 : the density of the particle that is the center of the second cluster
@@ -1990,6 +2104,7 @@ Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, in
 			tmp_mask[i*ncols + j] = 0;
 			p[i*ncols + j].log_rho = -99999.;
 			p[i*ncols + j].g = -99999.; 
+			p[i*ncols + j].array_idx = i*ncols + j;
 		}
 
 	}

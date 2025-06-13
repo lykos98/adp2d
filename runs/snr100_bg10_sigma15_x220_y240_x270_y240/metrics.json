@@ -1,0 +1,21 @@
+{
+  "labels": [
+    1,
+    2
+  ],
+  "confusion_matrix": [
+    [
+      293,
+      0
+    ],
+    [
+      0,
+      293
+    ]
+  ],
+  "pixel_accuracy": 1.0,
+  "iou_scores_per_class": [
+    1.0,
+    1.0
+  ]
+}
