@@ -5,6 +5,7 @@ import time
 from scipy.ndimage import center_of_mass
 from concurrent.futures import ThreadPoolExecutor
 import numba
+from astropy.io import fits
 
 
 ctFloatType = ct.c_double
@@ -83,18 +84,35 @@ class Clusters(ct.Structure):
 
 
 @numba.njit
-def _compute_coms_and_covs(segmentation_map: np.array, label_idx: np.array, coms: np.array, areas: np.array, covariance_matrices: np.array):
+def _compute_coms_and_covs(image: np.array,
+                           segmentation_map: np.array, 
+                           mask: np.array, 
+                           label_idx: np.array, 
+                           coms: np.array, areas: np.array,
+                           covariance_matrices: np.array,
+                           parent_id: np.array,
+                           flux: np.array,
+                           x_limits: np.array,
+                           y_limits: np.array):
     """
         segmentation_map: np.array( nrows, ncols )
+        mask: np.array
         label_idx: map from label to the correct index
         coms: np.array( nlabels, 2 )
         areas: np.array( nlabels )
         covariance_matrices: np.array( nlabels, 2, 2)
+        parent_idx: np.array
     """
     
     xrange  = segmentation_map.shape[1]
     yrange  = segmentation_map.shape[0]
     nlabels = coms.shape[0] 
+
+    x_limits[:,0] = xrange
+    y_limits[:,0] = yrange
+
+    x_limits[:,1] = 0.
+    y_limits[:,1] = 0.
 
     for xx in range(xrange):
         for yy in range(yrange):
@@ -104,9 +122,7 @@ def _compute_coms_and_covs(segmentation_map: np.array, label_idx: np.array, coms
                 coms[lab_idx,0] += float(xx)
                 coms[lab_idx,1] += float(yy)
                 areas[lab_idx]  += 1.
-                #numba.cuda.atomic.add(coms,(lab,0),xx)
-                #numba.cuda.atomic.add(coms,(lab,1),yy)
-                #numba.cuda.atomic.add(areas,lab,xx)
+                parent_id[lab_idx] = mask[yy,xx]
 
     for lab_idx in range(nlabels):
         if areas[lab_idx] > 1:
@@ -124,6 +140,15 @@ def _compute_coms_and_covs(segmentation_map: np.array, label_idx: np.array, coms
                 covariance_matrices[lab_idx, 0, 1] += x_n * y_n
                 covariance_matrices[lab_idx, 1, 0] += x_n * y_n
                 covariance_matrices[lab_idx, 1, 1] += y_n ** 2
+
+                x_limits[lab,0] = min(x_limits[lab,0], xx)
+                x_limits[lab,1] = max(x_limits[lab,1], xx)
+
+                y_limits[lab,0] = min(y_limits[lab,0], yy)
+                y_limits[lab,1] = max(y_limits[lab,1], yy)
+                flux[lab] += image[yy,xx]
+
+
                 
     for lab_idx in range(nlabels):
         if areas[lab_idx] > 1:
@@ -154,6 +179,7 @@ def _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images,
             b_images[i] = b_image
             ellipticities[i] = ellipticity
             semi_major_angles[i] = semi_major_angle
+
 
 class Data():
     def __init__(self, data : np.array):
@@ -323,11 +349,8 @@ class Data():
         self.state["computeHalo"] = halo 
         self.Z = Z
         self.n = np.prod(self.img.shape)
-        print("aaaa")
         self.__computeCorrection(self.__datapoints, self.mask, self.n, self.Z)
-        print("Correction")
         self.__clusters = self.__H1(self.__datapoints, self.mask, self.nrows, self.ncols)
-        print("H1")
         self.__ClustersAllocate(ct.pointer(self.__clusters), 1)
         self.__H2(ct.pointer(self.__clusters), self.__datapoints, self.mask, self.nrows, self.ncols)
         self.__H3(ct.pointer(self.__clusters), self.__datapoints, self.Z, 1 if halo else 0 )
@@ -335,8 +358,6 @@ class Data():
         self.clusterAssignment = None
 
     def getClusterAssignment(self) -> list:
-
-
         """Retrieve cluster assignment
 
         Raises:
@@ -391,7 +412,6 @@ class Data():
 
         Returns:
             List of density values
-            
         """
         self.kstar = np.array([float(self.__datapoints[j].kstar) for j in range(self.n)]) 
         return self.kstar
@@ -403,7 +423,6 @@ class Data():
             ValueError: Raise error if density is not computed, use `Data.computeDensity()` 
 
         Returns: List of density error values
-            
         """
         if self.densityError is None:
             if self.state["density"]:
@@ -419,7 +438,61 @@ class Data():
         self.state["density"] = True
         return
 
+    def exportSourcesCatalogue(self, fname = "catalogue.fits" ):
+        columns = [
+            fits.Column(name = 'SOURCE_ID', format = 'K'),
+            fits.Column(name = 'PARENT_ID', format = 'J'),
+            fits.Column(name = 'X_CENTER', format = 'D'),
+            fits.Column(name = 'Y_CENTER', format = 'D'),
+            fits.Column(name = 'XWIN_WORLD', format = 'D'),
+            fits.Column(name = 'YWIN_WORLD', format = 'D'),
+            fits.Column(name = 'X_MIN', format = 'J'),
+            fits.Column(name = 'X_MAX', format = 'J'),
+            fits.Column(name = 'Y_MIN', format = 'J'),
+            fits.Column(name = 'Y_MAX', format = 'J'),
+            fits.Column(name = 'ALPHA', format = 'D'),
+            fits.Column(name = 'BETA', format = 'D'),
+            fits.Column(name = 'ELLIPTICITY', format = 'D'),
+            fits.Column(name = 'R_MAX', format = 'D'),
+            fits.Column(name = 'POSITION_ANGLE', format = 'D'),
+            fits.Column(name = 'SEMI_MAJOR_ANGLE', format = 'D'),
+            fits.Column(name = 'FLUX_TOT', format = 'D'),
+            fits.Column(name = 'ISOAREA', format = 'J'),
+            fits.Column(name = 'SKIPPED', format = 'J'),]
 
+        if self.sources_properties is None:
+            raise ValueError("Sources properties are not computed")
+        nsources =  self.sources_properties["areas"].shape[0]
+
+        hdu = fits.BinTableHDU.from_columns(columns)
+
+        rec_array = np.zeros(nsources, dtype = hdu.data.dtype)
+         
+        for i in range(nsources):
+            rec_array[i]['SOURCE_ID']        = i
+            rec_array[i]['PARENT_ID']        = self.sources_properties['parent_id'][i] 
+            rec_array[i]['X_CENTER']         = int(self.sources_properties['centers_of_mass'][i][0])
+            rec_array[i]['Y_CENTER']         = int(self.sources_properties['centers_of_mass'][i][1])
+            rec_array[i]['XWIN_WORLD']       = -1
+            rec_array[i]['YWIN_WORLD']       = -1
+            rec_array[i]['X_MIN']            = self.sources_properties["x_limits"][i][0]
+            rec_array[i]['X_MAX']            = self.sources_properties["x_limits"][i][1]
+            rec_array[i]['Y_MIN']            = self.sources_properties["y_limits"][i][0]
+            rec_array[i]['Y_MAX']            = self.sources_properties["y_limits"][i][1]
+            rec_array[i]['ALPHA']            = self.sources_properties["minor_axes"][i]
+            rec_array[i]['BETA']             = self.sources_properties["major_axes"][i]
+            rec_array[i]['ELLIPTICITY']      = self.sources_properties["ellipticities"][i]
+            rec_array[i]['R_MAX']            = -1
+            rec_array[i]['POSITION_ANGLE']   = -1
+            rec_array[i]['SEMI_MAJOR_ANGLE'] = self.sources_properties["semi_major_angles"][i]
+            rec_array[i]['FLUX_TOT']         = int(self.sources_properties["flux"][i])
+            rec_array[i]['ISOAREA']          = self.sources_properties["areas"][i]
+            rec_array[i]['SKIPPED']          = -1
+
+        hdu.data = rec_array
+        hdu.writeto(fname)
+
+           
 
     def computeSourcesProperties(self, min_area = 10):
         start = time.time()
@@ -428,8 +501,6 @@ class Data():
         # Get unique labels in dadaC segmentation map
         unique_labels = np.unique(self.clusterAssignment)
         segmentation_map = self.clusterAssignment.reshape((self.nrows, self.ncols)).astype(np.int32)
-        
-
 
         label_idx = np.array([0 for _ in range(max(unique_labels + 1))], dtype = np.int32)
 
@@ -439,17 +510,22 @@ class Data():
 
         nlabs = len(unique_labels) - 1
 
-        coms = np.zeros((nlabs,2), dtype = np.float32)
-        covariance_matrices = np.zeros((nlabs,2,2), dtype = np.float32)
-        areas         = np.zeros((nlabs), dtype = np.float32)
-        a_images      = np.zeros((nlabs), dtype = np.float32)
-        b_images      = np.zeros((nlabs), dtype = np.float32)
-        ellipticities = np.zeros((nlabs), dtype = np.float32)
-        semi_major_angles = np.zeros((nlabs), dtype = np.float32)
+        coms = np.zeros((nlabs,2), dtype = np.int32)
+        covariance_matrices = np.zeros((nlabs,2,2), dtype = np.float64)
+        areas               = np.zeros((nlabs), dtype = np.float64)
+        a_images            = np.zeros((nlabs), dtype = np.float64)
+        b_images            = np.zeros((nlabs), dtype = np.float64)
+        ellipticities       = np.zeros((nlabs), dtype = np.float64)
+        semi_major_angles   = np.zeros((nlabs), dtype = np.float64)
+        flux                = np.zeros((nlabs), dtype = np.float64)
+        parent_id           = np.zeros((nlabs), dtype = np.int64)
+        x_limits            = np.zeros((nlabs, 2), dtype = np.int32)
+        y_limits            = np.zeros((nlabs, 2), dtype = np.int32)
 
         # Use ThreadPoolExecutor to parallelize the computation
 
-        _compute_coms_and_covs(segmentation_map, label_idx, coms, areas, covariance_matrices)
+        _compute_coms_and_covs(self.img, segmentation_map, self.mask, label_idx, coms, 
+                               areas, covariance_matrices, parent_id, flux, x_limits, y_limits)
         _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
         #print(coms)
         f = np.where(areas > min_area)
@@ -459,12 +535,17 @@ class Data():
         self.sources_properties["ellipticities"]     = ellipticities[f]
         self.sources_properties["major_axes"]        = b_images[f]
         self.sources_properties["minor_axes"]        = a_images[f]
-        self.sources_properties["position_angles"]   = semi_major_angles[f]
+        self.sources_properties["semi_major_angles"] = semi_major_angles[f]
+        self.sources_properties["x_limits"]          = x_limits[f]
+        self.sources_properties["y_limits"]          = y_limits[f]
+        self.sources_properties["flux"]              = flux[f]
+        self.sources_properties["parent_id"]         = parent_id 
 
         stop = time.time()
         print(f"\tElapsed time: {stop - start:.2f}s")
 
         return self.sources_properties
+
 
 
 
@@ -474,8 +555,8 @@ class Data():
             dim = max(self.nrows, self.ncols)
             scale = max_allowed_dim / dim
 
-        self.__write_png(fname.encode("utf-8"), self.__datapoints, self.data, self.__clusters.centers.count, self.ncols, self.nrows, np.uint64(self.ncols * scale), np.uint64(self.nrows * scale) )
 
+        self.__write_png(fname.encode("utf-8"), self.__datapoints, self.data, self.__clusters.centers.count, self.ncols, self.nrows, np.uint64(self.ncols * scale), np.uint64(self.nrows * scale) )
     def __del__(self):
         if not self.__datapoints is None:
             self.__freeDatapoints(self.__datapoints, self.n)

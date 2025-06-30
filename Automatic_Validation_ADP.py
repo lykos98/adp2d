@@ -102,6 +102,7 @@ def build_segmentation_map_with_importance(source_images, background_level, n=0.
     segmap : 2D np.ndarray (int)
         Final segmentation map (0 = background, 1, 2, ..., N = source labels)
     """
+
     num_sources = len(source_images)
     h, w        = source_images[0].shape
 
