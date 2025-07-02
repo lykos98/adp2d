@@ -468,29 +468,51 @@ class Data():
 
         rec_array = np.zeros(nsources, dtype = hdu.data.dtype)
          
-        for i in range(nsources):
-            rec_array[i]['SOURCE_ID']        = i
-            rec_array[i]['PARENT_ID']        = self.sources_properties['parent_id'][i] 
-            rec_array[i]['X_CENTER']         = int(self.sources_properties['centers_of_mass'][i][0])
-            rec_array[i]['Y_CENTER']         = int(self.sources_properties['centers_of_mass'][i][1])
-            rec_array[i]['XWIN_WORLD']       = -1
-            rec_array[i]['YWIN_WORLD']       = -1
-            rec_array[i]['X_MIN']            = self.sources_properties["x_limits"][i][0]
-            rec_array[i]['X_MAX']            = self.sources_properties["x_limits"][i][1]
-            rec_array[i]['Y_MIN']            = self.sources_properties["y_limits"][i][0]
-            rec_array[i]['Y_MAX']            = self.sources_properties["y_limits"][i][1]
-            rec_array[i]['ALPHA']            = self.sources_properties["minor_axes"][i]
-            rec_array[i]['BETA']             = self.sources_properties["major_axes"][i]
-            rec_array[i]['ELLIPTICITY']      = self.sources_properties["ellipticities"][i]
-            rec_array[i]['R_MAX']            = -1
-            rec_array[i]['POSITION_ANGLE']   = -1
-            rec_array[i]['SEMI_MAJOR_ANGLE'] = self.sources_properties["semi_major_angles"][i]
-            rec_array[i]['FLUX_TOT']         = int(self.sources_properties["flux"][i])
-            rec_array[i]['ISOAREA']          = self.sources_properties["areas"][i]
-            rec_array[i]['SKIPPED']          = -1
+        if nsources > 1:
+            for i in range(nsources):
+                rec_array[i]['SOURCE_ID']        = i
+                rec_array[i]['PARENT_ID']        = self.sources_properties['parent_id'][i] 
+                rec_array[i]['X_CENTER']         = int(self.sources_properties['centers_of_mass'][i][0])
+                rec_array[i]['Y_CENTER']         = int(self.sources_properties['centers_of_mass'][i][1])
+                rec_array[i]['XWIN_WORLD']       = -1
+                rec_array[i]['YWIN_WORLD']       = -1
+                rec_array[i]['X_MIN']            = self.sources_properties["x_limits"][i][0]
+                rec_array[i]['X_MAX']            = self.sources_properties["x_limits"][i][1]
+                rec_array[i]['Y_MIN']            = self.sources_properties["y_limits"][i][0]
+                rec_array[i]['Y_MAX']            = self.sources_properties["y_limits"][i][1]
+                rec_array[i]['ALPHA']            = self.sources_properties["minor_axes"][i]
+                rec_array[i]['BETA']             = self.sources_properties["major_axes"][i]
+                rec_array[i]['ELLIPTICITY']      = self.sources_properties["ellipticities"][i]
+                rec_array[i]['R_MAX']            = -1
+                rec_array[i]['POSITION_ANGLE']   = -1
+                rec_array[i]['SEMI_MAJOR_ANGLE'] = self.sources_properties["semi_major_angles"][i]
+                rec_array[i]['FLUX_TOT']         = int(self.sources_properties["flux"][i])
+                rec_array[i]['ISOAREA']          = self.sources_properties["areas"][i]
+                rec_array[i]['SKIPPED']          = -1
+        else:
+            # handle the case in which we have only one source
+            rec_array['SOURCE_ID']        = 0
+            rec_array['PARENT_ID']        = self.sources_properties['parent_id'] 
+            rec_array['X_CENTER']         = int(self.sources_properties['centers_of_mass'][0])
+            rec_array['Y_CENTER']         = int(self.sources_properties['centers_of_mass'][1])
+            rec_array['XWIN_WORLD']       = -1
+            rec_array['YWIN_WORLD']       = -1
+            rec_array['X_MIN']            = self.sources_properties["x_limits"][0][0]
+            rec_array['X_MAX']            = self.sources_properties["x_limits"][0][1]
+            rec_array['Y_MIN']            = self.sources_properties["y_limits"][0][0]
+            rec_array['Y_MAX']            = self.sources_properties["y_limits"][0][1]
+            rec_array['ALPHA']            = self.sources_properties["minor_axes"]
+            rec_array['BETA']             = self.sources_properties["major_axes"]
+            rec_array['ELLIPTICITY']      = self.sources_properties["ellipticities"]
+            rec_array['R_MAX']            = -1
+            rec_array['POSITION_ANGLE']   = -1
+            rec_array['SEMI_MAJOR_ANGLE'] = self.sources_properties["semi_major_angles"]
+            rec_array['FLUX_TOT']         = int(self.sources_properties["flux"])
+            rec_array['ISOAREA']          = self.sources_properties["areas"]
+            rec_array['SKIPPED']          = -1
 
         hdu.data = rec_array
-        hdu.writeto(fname)
+        hdu.writeto(fname, overwrite=True)
 
            
 
@@ -527,8 +549,9 @@ class Data():
         _compute_coms_and_covs(self.img, segmentation_map, self.mask, label_idx, coms, 
                                areas, covariance_matrices, parent_id, flux, x_limits, y_limits)
         _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
-        #print(coms)
+
         f = np.where(areas > min_area)
+
         self.sources_properties = {}
         self.sources_properties["centers_of_mass"]   = coms[f].T
         self.sources_properties["areas"]             = areas[f]
@@ -539,7 +562,7 @@ class Data():
         self.sources_properties["x_limits"]          = x_limits[f]
         self.sources_properties["y_limits"]          = y_limits[f]
         self.sources_properties["flux"]              = flux[f]
-        self.sources_properties["parent_id"]         = parent_id 
+        self.sources_properties["parent_id"]         = parent_id[f] 
 
         stop = time.time()
         print(f"\tElapsed time: {stop - start:.2f}s")
