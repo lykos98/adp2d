@@ -377,7 +377,7 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         clock_gettime(CLOCK_MONOTONIC, &start);
     #endif
 
-    #pragma omp parallel for collapse(2)
+    #pragma omp parallel for
     for(int i = 0; i < (int)nrows; ++i)
     for(int j = 0; j < (int)ncols; ++j)
     {   
