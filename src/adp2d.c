@@ -377,7 +377,7 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         clock_gettime(CLOCK_MONOTONIC, &start);
     #endif
 
-    //#pragma omp parallel for
+    #pragma omp parallel for
     for(int i = 0; i < (int)nrows; ++i)
     for(int j = 0; j < (int)ncols; ++j)
     {   
@@ -414,12 +414,16 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 				}
 			}
 		}
-        if(dpInfo[i*ncols + j].is_center && mask[i*ncols + j]){
+    }
+
+    for(int i = 0; i < (int)nrows; ++i)
+        for(int j = 0; j < (int)ncols; ++j)
+        {
+            if(dpInfo[i*ncols + j].is_center && mask[i*ncols + j]){
                 DynamicArray_pushBack(&allCenters, i*ncols + j);
+            }
         }
 
-
-    }
 
     #ifdef VERBOSE
         clock_gettime(CLOCK_MONOTONIC, &finish);

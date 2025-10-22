@@ -462,6 +462,7 @@ class Data():
 
         if self.sources_properties is None:
             raise ValueError("Sources properties are not computed")
+
         nsources =  self.sources_properties["areas"].shape[0]
 
         hdu = fits.BinTableHDU.from_columns(columns)
