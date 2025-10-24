@@ -87,7 +87,6 @@ class Clusters(ct.Structure):
 def _compute_coms_and_covs(image: np.array,
                            segmentation_map: np.array, 
                            mask: np.array, 
-                           label_idx: np.array, 
                            coms: np.array, areas: np.array,
                            covariance_matrices: np.array,
                            parent_id: np.array,
@@ -97,7 +96,6 @@ def _compute_coms_and_covs(image: np.array,
     """
         segmentation_map: np.array( nrows, ncols )
         mask: np.array
-        label_idx: map from label to the correct index
         coms: np.array( nlabels, 2 )
         areas: np.array( nlabels )
         covariance_matrices: np.array( nlabels, 2, 2)
@@ -118,28 +116,25 @@ def _compute_coms_and_covs(image: np.array,
         for yy in range(yrange):
             lab = segmentation_map[yy,xx] 
             if lab != -1:
-                lab_idx = label_idx[lab]
-                coms[lab_idx,0] += float(xx)
-                coms[lab_idx,1] += float(yy)
-                areas[lab_idx]  += 1.
-                parent_id[lab_idx] = mask[yy,xx]
+                coms[lab,0] += float(xx)
+                coms[lab,1] += float(yy)
+                areas[lab]  += 1.
+                parent_id[lab] = mask[yy,xx]
 
-    for lab_idx in range(nlabels):
-        if areas[lab_idx] > 1:
-            coms[lab_idx] = coms[lab_idx]/areas[lab_idx]
+    for lab in range(nlabels):
+        coms[lab] = coms[lab]/areas[lab]
 
     for xx in range(xrange):
         for yy in range(yrange):
             lab = segmentation_map[yy,xx] 
             if lab != -1:
-                lab_idx = label_idx[lab]
                 
-                x_n = float(xx) - coms[lab_idx,0]
-                y_n = float(yy) - coms[lab_idx,1]
-                covariance_matrices[lab_idx, 0, 0] += x_n ** 2
-                covariance_matrices[lab_idx, 0, 1] += x_n * y_n
-                covariance_matrices[lab_idx, 1, 0] += x_n * y_n
-                covariance_matrices[lab_idx, 1, 1] += y_n ** 2
+                x_n = float(xx) - coms[lab,0]
+                y_n = float(yy) - coms[lab,1]
+                covariance_matrices[lab, 0, 0] += x_n ** 2
+                covariance_matrices[lab, 0, 1] += x_n * y_n
+                covariance_matrices[lab, 1, 0] += x_n * y_n
+                covariance_matrices[lab, 1, 1] += y_n ** 2
 
                 x_limits[lab,0] = min(x_limits[lab,0], xx)
                 x_limits[lab,1] = max(x_limits[lab,1], xx)
@@ -149,9 +144,8 @@ def _compute_coms_and_covs(image: np.array,
                 flux[lab] += image[yy,xx]
 
                 
-    for lab_idx in range(nlabels):
-        if areas[lab_idx] > 1:
-            covariance_matrices[lab_idx,:,:] = covariance_matrices[lab_idx,:,:]/(areas[lab_idx] - 1)
+    for lab in range(nlabels):
+        covariance_matrices[lab,:,:] = covariance_matrices[lab,:,:]/(areas[lab] - 1)
 
 @numba.njit(parallel = True)
 def _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles):
@@ -527,17 +521,10 @@ class Data():
         start = time.time()
         print("Computing sources properties")
         self.getClusterAssignment()
-        # Get unique labels in dadaC segmentation map
-        unique_labels = np.unique(self.clusterAssignment)
+
         segmentation_map = self.clusterAssignment.reshape((self.nrows, self.ncols)).astype(np.int32)
 
-        label_idx = np.array([0 for _ in range(max(unique_labels + 1))], dtype = np.int32)
-
-        for i,l in enumerate(unique_labels[1:]):
-            label_idx[l] = i
-
-
-        nlabs = len(unique_labels) - 1
+        nlabs = self.__clusters.centers.count
 
         coms = np.zeros((nlabs,2), dtype = np.int32)
         covariance_matrices = np.zeros((nlabs,2,2), dtype = np.float64)
@@ -552,10 +539,17 @@ class Data():
         y_limits            = np.zeros((nlabs, 2), dtype = np.int32)
 
         print("Computing cov matrices")
-        _compute_coms_and_covs(self.img, segmentation_map, self.mask, label_idx, coms, 
+        start_sub = time.monotonic()
+        _compute_coms_and_covs(self.img, segmentation_map, self.mask, coms, 
                                areas, covariance_matrices, parent_id, flux, x_limits, y_limits)
-        print("Computing cov prperties")
+        stop_sub = time.monotonic()
+        print(f"    Time: {stop_sub - start_sub: .2f}")
+        print("Computing cov features")
+
+        start_sub = time.monotonic()
         _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
+        stop_sub = time.monotonic()
+        print(f"    Time: {stop_sub - start_sub: .2f}")
 
         f = np.where(areas > min_area)
 

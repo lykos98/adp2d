@@ -367,7 +367,7 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         idx_t n_labels_mask = 0;
 
         // compute number of clusters
-        printf("Copmuting n detection\n");
+        printf("Computing n detection\n");
         #pragma omp parallel 
         {
             idx_t pvt_max = 0;
@@ -387,7 +387,7 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         // since they go from 0 to N
         n_labels_mask++;
 
-        printf("Copmuting bouding boxes\n");
+        printf("Computing bouding boxes\n");
         bounding_box_t* bounding_boxes = (bounding_box_t* )malloc(n_labels_mask * sizeof(bounding_box_t));
 
         for(int i = 0; i < n_labels_mask; ++i)
@@ -442,7 +442,7 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 
         // avoid 0
 
-        printf("Copmuting clustering\n");
+        printf("Computing clustering\n");
         int* clusters_per_box = (int*)calloc(n_labels_mask, sizeof(int));
 
         for(int lab = 0; lab < 15; ++lab)
@@ -563,7 +563,7 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
             }
         }
     
-    printf("Pruning clusters smaller than %d pixels of area", min_size);
+    printf("Pruning clusters smaller than %d pixels of area\n", min_size);
     int label_count = 0;
     for(int i = 0; i < c.centers.count; ++i)
     {
