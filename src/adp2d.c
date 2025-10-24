@@ -22,8 +22,8 @@
 #define MAX_N_NGBH 1000
 #define PREALLOC_BORDERS 10
 
-#define MAX(x,y) x > y ? x : y
-#define MIN(x,y) x < y ? x : y
+#define MAX(x,y) (x > y ? x : y)
+#define MIN(x,y) (x < y ? x : y)
 
 unsigned int data_dims;
 idx_t Npart;
@@ -339,9 +339,265 @@ void computeCorrection(Datapoint_info* dpInfo, int* mask, idx_t n, FLOAT_TYPE Z)
     //printf("%lf\n",min_log_rho);
 }
 
+typedef struct {
+    int lb_row;
+    int lb_col;
+    int ub_row;
+    int ub_col;
+    int label;
+} bounding_box_t;
 
-//Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, int nrows, int ncols)
-Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols)
+Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int min_size, float Z, bool halo, bool split_per_thread) 
+{
+    int machine_threads = omp_get_num_threads(); 
+    Clusters c = {0};
+    // this has to be called 
+    printf("Computing correction\n");
+    computeCorrection(dpInfo, mask, nrows * ncols, Z);
+
+    // then see if I can split the compute per thread
+    //
+    int aa = 0;
+    for(int i = 0; i < nrows * ncols; ++i)
+    {
+        if(aa < mask[i]) aa = mask[i];
+    }
+    if(split_per_thread) 
+    {
+        idx_t n_labels_mask = 0;
+
+        // compute number of clusters
+        printf("Copmuting n detection\n");
+        #pragma omp parallel 
+        {
+            idx_t pvt_max = 0;
+            #pragma omp for 
+            for(int i = 0; i < nrows; ++i)
+                for(int j = 0; j < ncols; ++j)
+                {
+                    pvt_max = MAX(mask[i*ncols + j], pvt_max);
+                }
+
+            #pragma omp critical (max_n_labels)
+            {
+                n_labels_mask = MAX(n_labels_mask, pvt_max);
+            }
+        }
+
+        // since they go from 0 to N
+        n_labels_mask++;
+
+        printf("Copmuting bouding boxes\n");
+        bounding_box_t* bounding_boxes = (bounding_box_t* )malloc(n_labels_mask * sizeof(bounding_box_t));
+
+        for(int i = 0; i < n_labels_mask; ++i)
+        {
+            bounding_boxes[i].label = i;
+            bounding_boxes[i].lb_row = nrows;
+            bounding_boxes[i].lb_col = ncols;
+            bounding_boxes[i].ub_row = 0;
+            bounding_boxes[i].ub_col = 0;
+        }
+
+        #pragma omp parallel 
+        {
+            bounding_box_t* pvt_bounding_boxes = (bounding_box_t* )malloc(n_labels_mask * sizeof(bounding_box_t));
+
+            for(int lab = 0; lab < n_labels_mask; ++lab)
+            {
+                pvt_bounding_boxes[lab].label = lab;
+                pvt_bounding_boxes[lab].lb_row = nrows;
+                pvt_bounding_boxes[lab].lb_col = ncols;
+                pvt_bounding_boxes[lab].ub_row = 0;
+                pvt_bounding_boxes[lab].ub_col = 0;
+            }
+
+            #pragma omp for 
+            for(int i = 0; i < nrows; ++i)
+                for(int j = 0; j < ncols; ++j)
+                {
+                    int lab = mask[i * ncols + j];
+                    if(lab)
+                    {
+                        pvt_bounding_boxes[lab].lb_row = MIN(i, pvt_bounding_boxes[lab].lb_row);
+                        pvt_bounding_boxes[lab].lb_col = MIN(j, pvt_bounding_boxes[lab].lb_col);
+                        pvt_bounding_boxes[lab].ub_row = MAX(i, pvt_bounding_boxes[lab].ub_row);
+                        pvt_bounding_boxes[lab].ub_col = MAX(j, pvt_bounding_boxes[lab].ub_col);
+                    }
+                }
+
+            #pragma omp critical 
+            {
+                for(int lab = 0; lab < n_labels_mask; ++lab)
+                {
+                    bounding_boxes[lab].lb_row = MIN(bounding_boxes[lab].lb_row, pvt_bounding_boxes[lab].lb_row);
+                    bounding_boxes[lab].lb_col = MIN(bounding_boxes[lab].lb_col, pvt_bounding_boxes[lab].lb_col);
+                    bounding_boxes[lab].ub_row = MAX(bounding_boxes[lab].ub_row, pvt_bounding_boxes[lab].ub_row);
+                    bounding_boxes[lab].ub_col = MAX(bounding_boxes[lab].ub_col, pvt_bounding_boxes[lab].ub_col);
+                }
+            }
+            free(pvt_bounding_boxes);
+
+        }
+
+        // avoid 0
+
+        printf("Copmuting clustering\n");
+        int* clusters_per_box = (int*)calloc(n_labels_mask, sizeof(int));
+
+        for(int lab = 0; lab < 15; ++lab)
+        {
+            bounding_box_t box = bounding_boxes[lab];
+
+        }
+        // compute bounding boxes 
+        #pragma omp parallel for schedule(dynamic)
+        for(int lab = 1; lab < n_labels_mask; ++lab)
+        {
+            bounding_box_t box = bounding_boxes[lab];
+
+            // check if the box have been setted
+            bool box_is_valid = (box.lb_row < nrows) && 
+                                (box.lb_col < ncols) &&
+                                (box.ub_row > 0) &&
+                                (box.ub_col > 0);
+
+
+            if(box_is_valid)
+            {
+                // printf("Processing box row [%d %d] col [%d %d]\n",  box.lb_row, box.ub_row, 
+                //                                                    box.lb_col, box.ub_col);
+                int ncols_box = (box.ub_col - box.lb_col) + 1;
+                int nrows_box = (box.ub_row - box.lb_row) + 1;
+                int n_pixels_in_box =  nrows_box * ncols_box;
+
+                int* tmp_mask = (int*)malloc(ncols_box * nrows_box * sizeof(int));
+                Datapoint_info* tmp_dp = (Datapoint_info*)malloc(ncols_box * nrows_box * sizeof(Datapoint_info));
+
+
+                // copy datapoints and everything into a temporary array
+                // on these adp should run
+                for(int i = 0; i < nrows_box; ++i)
+                    for(int j = 0; j < ncols_box; ++j)
+                    {
+                        int ii = i + box.lb_row;
+                        int jj = j + box.lb_col;
+
+                        memcpy(tmp_dp + i*ncols_box + j, dpInfo + ii*ncols + jj, sizeof(Datapoint_info));
+                        tmp_dp[i*ncols_box + j].array_idx = i*ncols_box + j;
+
+                        bool mask_is_lab = mask[ii*ncols + jj] == lab;
+                        tmp_mask[i*ncols_box + j] = mask_is_lab ? lab : 0;
+                    }
+
+                Clusters c_tmp = Heuristic1(tmp_dp, tmp_mask, nrows_box, ncols_box, 1, false);
+                Clusters_allocate(&c_tmp, false);
+                Heuristic2(&c_tmp, tmp_dp, tmp_mask, nrows_box, ncols_box, 1, false);
+                Heuristic3(&c_tmp, tmp_dp, Z, halo, 1, false);
+
+                // if(c_tmp.n > 1000) printf("c_tmp.n %lu\n", c_tmp.n);
+                clusters_per_box[lab] = c_tmp.centers.count;
+
+                //copy cluster assignment
+                for(int i = 0; i < nrows_box; ++i)
+                    for(int j = 0; j < ncols_box; ++j)
+                    {
+                        int ii = i + box.lb_row;
+                        int jj = j + box.lb_col;
+                        if(mask[ii * ncols + jj] == lab) dpInfo[ii * ncols + jj].cluster_idx = tmp_dp[i * ncols_box + j].cluster_idx;
+                    }
+
+                Clusters_free(&c_tmp);
+                free(tmp_mask);
+                free(tmp_dp);
+            }
+        }
+
+        // compute correct cluster indices
+
+        int n_clusters = 0;
+        // exclusive prefix sum
+        //
+        for(int i = 0; i < n_labels_mask; ++i)
+        {
+            int tmp_n = clusters_per_box[i];
+            clusters_per_box[i] = n_clusters;
+            n_clusters += tmp_n; 
+        }
+
+        #pragma omp parallel for
+        for(idx_t i = 0; i < nrows * ncols; ++i)
+        {
+             int lab = mask[i];
+             dpInfo[i].cluster_idx += clusters_per_box[lab];
+        }
+        
+        printf("Final n clusters %d\n", n_clusters);
+        c.centers.count = n_clusters;
+        free(bounding_boxes);
+        free(clusters_per_box);
+
+    }
+    else 
+    {
+        c = Heuristic1(dpInfo, mask, nrows, ncols, machine_threads, true);
+        Clusters_allocate(&c, true);
+        Heuristic2(&c, dpInfo, mask, nrows, ncols, machine_threads, true);
+        Heuristic3(&c, dpInfo, Z, halo, machine_threads, true);
+    }
+
+    // filter out clusters less than min size
+
+    int* pixel_count_per_cluster = (int*)calloc(c.centers.count, sizeof(int));
+    int* new_labels              = (int*)calloc(c.centers.count, sizeof(int));
+
+    #pragma omp parallel for schedule(dynamic)
+    for(int i = 0; i < nrows; ++i)
+        for(int j = 0; j < ncols; ++j)
+        {
+            int cidx = dpInfo[i*ncols + j].cluster_idx;
+            if(cidx != -1)
+            {
+                #pragma omp atomic update
+                pixel_count_per_cluster[cidx]++;
+            }
+        }
+    
+    printf("Pruning clusters smaller than %d pixels of area", min_size);
+    int label_count = 0;
+    for(int i = 0; i < c.centers.count; ++i)
+    {
+        if(pixel_count_per_cluster[i] > min_size)
+        {
+            new_labels[i] = label_count;
+            ++label_count;
+        }
+        else
+        {
+            new_labels[i] = -1;
+        }
+    }
+
+    printf("Final cluster count after pruning %d\n", label_count);
+
+    #pragma omp parallel for 
+    for(int i = 0; i < nrows; ++i)
+        for(int j = 0; j < ncols; ++j)
+        {
+            int cidx = dpInfo[i*ncols + j].cluster_idx;
+            dpInfo[i*ncols + j].cluster_idx = cidx != -1 ? new_labels[cidx] : cidx;
+        }
+
+    c.centers.count = label_count;
+
+    free(pixel_count_per_cluster);
+    free(new_labels);
+    return c;
+}
+
+
+//Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, int nrows, int ncols)- 
+Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int num_threads, bool verbose)
 {
     /**************************************************************
      * Heurisitc 1, from paper of Errico, Facco, Laio & Rodriguez *
@@ -356,7 +612,7 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
     struct timespec start_tot, finish_tot;
     double elapsed_tot;
 
-    printf("H1: Preliminary cluster assignment\n");
+    if(verbose) printf("H1: Preliminary cluster assignment\n");
     clock_gettime(CLOCK_MONOTONIC, &start_tot);
 
     //idx_t ncenters = 0;
@@ -373,11 +629,9 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
     double elapsed;
 
 
-    #ifdef VERBOSE
-        clock_gettime(CLOCK_MONOTONIC, &start);
-    #endif
+    if(verbose) clock_gettime(CLOCK_MONOTONIC, &start);
 
-    #pragma omp parallel for
+    #pragma omp parallel for num_threads(num_threads)
     for(int i = 0; i < (int)nrows; ++i)
     for(int j = 0; j < (int)ncols; ++j)
     {   
@@ -425,13 +679,15 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         }
 
 
-    #ifdef VERBOSE
+    if(verbose)
+    {
         clock_gettime(CLOCK_MONOTONIC, &finish);
         elapsed = (finish.tv_sec - start.tv_sec);
         elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
         printf("\tFinding putative centers: %.3lfs\n",elapsed);
         clock_gettime(CLOCK_MONOTONIC, &start);
-    #endif
+
+    }
 
 	qsort(dpInfo_ptrs, nrows*ncols, sizeof(Datapoint_info*), cmpPP);
 
@@ -442,7 +698,7 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
     for(idx_t p = 0; p < nrows*ncols; ++p) {to_remove_mask[p] = MY_SIZE_MAX;}
 
 	
-    #pragma omp parallel shared(to_remove_mask)
+    #pragma omp parallel shared(to_remove_mask) num_threads(num_threads)
     {
         #pragma omp for
         for(idx_t p = 0; p < nrows*ncols; ++p)
@@ -535,14 +791,14 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 	free(to_remove_mask);
 
 
-    #ifdef VERBOSE
+    if(verbose)
+    {
         clock_gettime(CLOCK_MONOTONIC, &finish);
         elapsed = (finish.tv_sec - start.tv_sec);
         elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
         printf("\tFinding actual centers:   %.3lfs\n",elapsed);
-
         clock_gettime(CLOCK_MONOTONIC, &start);
-    #endif
+    }
 
 
     //idx_t nclusters = 0;
@@ -564,7 +820,7 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 	
 	
 	
-	#pragma omp parallel for schedule(dynamic)
+	#pragma omp parallel for schedule(dynamic) num_threads(num_threads)
     for(idx_t pidx = 0; pidx < nrows*ncols; ++pidx)
     {   
         Datapoint_info* p = dpInfo_ptrs[pidx];
@@ -671,14 +927,15 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 	
     
 
-    #ifdef VERBOSE
+    if(verbose)
+    {
         clock_gettime(CLOCK_MONOTONIC, &finish);
         elapsed = (finish.tv_sec - start.tv_sec);
         elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
         printf("\tTentative clustering:     %.3lfs\n",elapsed);
-
         clock_gettime(CLOCK_MONOTONIC, &start);
-    #endif
+
+    }
 
     free(dpInfo_ptrs);
     free(max_rho.data);
@@ -690,27 +947,29 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
     c_all.centers = actualCenters;
 
 
-    #ifdef VERBOSE
+    if(verbose)
+    {
         clock_gettime(CLOCK_MONOTONIC, &finish);
         elapsed = (finish.tv_sec - start.tv_sec);
         elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
         printf("\tFinalizing clustering:    %.3lfs\n",elapsed);
         printf("\n");
-    #endif
 
-    clock_gettime(CLOCK_MONOTONIC, &finish_tot);
-    elapsed_tot = (finish_tot.tv_sec - start_tot.tv_sec);
-    elapsed_tot += (finish_tot.tv_nsec - start_tot.tv_nsec) / 1000000000.0;
+        clock_gettime(CLOCK_MONOTONIC, &finish_tot);
+        elapsed_tot = (finish_tot.tv_sec - start_tot.tv_sec);
+        elapsed_tot += (finish_tot.tv_nsec - start_tot.tv_nsec) / 1000000000.0;
 
 
-    printf("\tFound %lu clusters\n",(uint64_t)actualCenters.count);
-    printf("\tTotal time: %.3lfs\n\n", elapsed_tot);
+        printf("\tFound %lu clusters\n",(uint64_t)actualCenters.count);
+        printf("\tTotal time: %.3lfs\n\n", elapsed_tot);
+    }
+
 
     c_all.n = nrows*ncols;
     return c_all;
 }
 
-void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols)
+void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int num_threads, bool verbose)
 {
 
     #define borders cluster->borders
@@ -719,7 +978,7 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
     double elapsed_tot;
     //idx_t n = cluster -> n;
 
-    printf("H2: Finding border points\n");
+    if(verbose) printf("H2: Finding border points\n");
     clock_gettime(CLOCK_MONOTONIC, &start_tot);
 
 
@@ -862,10 +1121,14 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
 		}
     }
 
-    clock_gettime(CLOCK_MONOTONIC, &finish_tot);
-    elapsed_tot = (finish_tot.tv_sec - start_tot.tv_sec);
-    elapsed_tot += (finish_tot.tv_nsec - start_tot.tv_nsec) / 1000000000.0;
-    printf("\tTotal time: %.3lfs\n\n", elapsed_tot);
+    if(verbose)
+    {
+        clock_gettime(CLOCK_MONOTONIC, &finish_tot);
+        elapsed_tot = (finish_tot.tv_sec - start_tot.tv_sec);
+        elapsed_tot += (finish_tot.tv_nsec - start_tot.tv_nsec) / 1000000000.0;
+        printf("\tTotal time: %.3lfs\n\n", elapsed_tot);
+
+    }
 
     return;
     #undef borders
@@ -1045,9 +1308,9 @@ void fix_SparseBorders_A_into_B(idx_t s,idx_t t,Clusters* c)
 
 }
 
-void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, int halo)
+void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, int halo, int num_threads, bool verbose)
 {
-  printf("Using sparse implementation\n");
+  if(verbose) printf("Using sparse implementation\n");
   #define borders cluster->borders
 
   struct timespec start_tot, finish_tot;
@@ -1056,11 +1319,9 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, 
   struct timespec start, finish;
   double elapsed;
 
-  printf("H3: Merging clusters\n");
+  if(verbose) printf("H3: Merging clusters\n");
   clock_gettime(CLOCK_MONOTONIC, &start_tot);
-  #ifdef VERBOSE
- 	 clock_gettime(CLOCK_MONOTONIC, &start); 
-  #endif
+  if(verbose) clock_gettime(CLOCK_MONOTONIC, &start); 
 
   idx_t nclus                 = cluster -> centers.count;  
   idx_t *  surviving_clusters = (idx_t*)malloc(nclus*sizeof(idx_t));
@@ -1112,13 +1373,15 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, 
 
   qsort( (void*)merging_table, merge_count, sizeof(merge_t), compare_merging_density);
 
-  #ifdef VERBOSE
+  if(verbose)
+  {
 	clock_gettime(CLOCK_MONOTONIC, &finish); 
 	elapsed = (finish.tv_sec - start.tv_sec);
 	elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
 	printf("\tFinding merges:   %.3lfs\n", elapsed);
 	clock_gettime(CLOCK_MONOTONIC, &start); 
-  #endif
+
+  }
   
   
     for( idx_t m = 0; m < merge_count; m++ )
@@ -1177,13 +1440,15 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, 
         #undef trg
     }
 
-  #ifdef VERBOSE
+  if(verbose)
+  {
 	clock_gettime(CLOCK_MONOTONIC, &finish); 
 	elapsed = (finish.tv_sec - start.tv_sec);
 	elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
 	printf("\tCluster merging:  %.3lfs\n", elapsed);
 	clock_gettime(CLOCK_MONOTONIC, &start); 
-  #endif
+
+  }
   
     /*Finalize clustering*/
     /*Acutally copying */
@@ -1248,7 +1513,7 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, 
     }
 
     
-    #pragma omp parallel for
+    #pragma omp parallel for num_threads(num_threads)
     for(idx_t c = 0; c < final_cluster_count; ++c)
     {
         idx_t c_idx = tmp_cluster_idx.data[c];
@@ -1332,27 +1597,29 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, 
     free(surviving_clusters);
     free(old_to_new);
 
-  #ifdef VERBOSE
-	clock_gettime(CLOCK_MONOTONIC, &finish); 
-	elapsed = (finish.tv_sec - start.tv_sec);
-	elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
-	printf("\tFinal operations: %.3lfs\n\n", elapsed);
-  #endif
+    if(verbose)
+    {
+        clock_gettime(CLOCK_MONOTONIC, &finish); 
+        elapsed = (finish.tv_sec - start.tv_sec);
+        elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
+        printf("\tFinal operations: %.3lfs\n\n", elapsed);
 
-    clock_gettime(CLOCK_MONOTONIC, &finish_tot);
-    elapsed_tot = (finish_tot.tv_sec - start_tot.tv_sec);
-    elapsed_tot += (finish_tot.tv_nsec - start_tot.tv_nsec) / 1000000000.0;
-    printf("\tFound %lu possible merges\n",(uint64_t)merge_count);
-    printf("\tSurviving clusters %lu\n",(uint64_t)final_cluster_count);
-    printf("\tTotal time: %.3lfs\n\n", elapsed_tot);
+        clock_gettime(CLOCK_MONOTONIC, &finish_tot);
+        elapsed_tot = (finish_tot.tv_sec - start_tot.tv_sec);
+        elapsed_tot += (finish_tot.tv_nsec - start_tot.tv_nsec) / 1000000000.0;
+        printf("\tFound %lu possible merges\n",(uint64_t)merge_count);
+        printf("\tSurviving clusters %lu\n",(uint64_t)final_cluster_count);
+        printf("\tTotal time: %.3lfs\n\n", elapsed_tot);
+    }
+
 
   #undef  borders  
 }
 
 
-void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, int halo)
+void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, int halo, int num_threads, bool verbose)
 {
-  printf("Using dense implementation\n");
+  if(verbose) printf("Using dense implementation\n");
   #define borders cluster->borders
 
   struct timespec start_tot, finish_tot;
@@ -1361,11 +1628,9 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, i
   struct timespec start, finish;
   double elapsed;
 
-  printf("H3: Merging clusters\n");
-  clock_gettime(CLOCK_MONOTONIC, &start_tot);
-  #ifdef VERBOSE
- 	 clock_gettime(CLOCK_MONOTONIC, &start); 
-  #endif
+  if(verbose) printf("H3: Merging clusters\n");
+  if(verbose) clock_gettime(CLOCK_MONOTONIC, &start_tot);
+  if(verbose) clock_gettime(CLOCK_MONOTONIC, &start); 
 
   idx_t nclus              = cluster -> centers.count;  
   idx_t *  surviving_clusters = (idx_t*)malloc(nclus*sizeof(idx_t));
@@ -1426,14 +1691,15 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, i
       }
 
   qsort( (void*)merging_table, merge_count, sizeof(merge_t), compare_merging_density);
-  #ifdef VERBOSE
+  if(verbose)
+  {
 	clock_gettime(CLOCK_MONOTONIC, &finish); 
 	elapsed = (finish.tv_sec - start.tv_sec);
 	elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
 	printf("\tFinding merges:   %.3lfs\n", elapsed);
 	clock_gettime(CLOCK_MONOTONIC, &start); 
-  #endif
-  
+
+  }
   
     for( idx_t m = 0; m < merge_count; m++ )
     {
@@ -1489,13 +1755,15 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, i
         #undef trg
     }
 
-  #ifdef VERBOSE
-	clock_gettime(CLOCK_MONOTONIC, &finish); 
-	elapsed = (finish.tv_sec - start.tv_sec);
-	elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
-	printf("\tCluster merging:  %.3lfs\n", elapsed);
-	clock_gettime(CLOCK_MONOTONIC, &start); 
-  #endif
+    if(verbose)
+    {
+        clock_gettime(CLOCK_MONOTONIC, &finish); 
+        elapsed = (finish.tv_sec - start.tv_sec);
+        elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
+        printf("\tCluster merging:  %.3lfs\n", elapsed);
+        clock_gettime(CLOCK_MONOTONIC, &start); 
+
+    }
   
     /*Finalize clustering*/
     /*Acutally copying */
@@ -1546,7 +1814,7 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, i
     }
 
     /*Fix cluster assignment*/
-    #pragma omp parallel for
+    #pragma omp parallel for num_threads(num_threads)
     for(idx_t i = 0; i < cluster -> n; ++i)
     {
         dpInfo[i].is_center = 0;
@@ -1644,33 +1912,34 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, i
     free(surviving_clusters);
     free(old_to_new);
 
-  #ifdef VERBOSE
-	clock_gettime(CLOCK_MONOTONIC, &finish); 
-	elapsed = (finish.tv_sec - start.tv_sec);
-	elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
-	printf("\tFinal operations: %.3lfs\n\n", elapsed);
-  #endif
+    if(verbose)
+    {
+        clock_gettime(CLOCK_MONOTONIC, &finish); 
+        elapsed = (finish.tv_sec - start.tv_sec);
+        elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
+        printf("\tFinal operations: %.3lfs\n\n", elapsed);
 
-    clock_gettime(CLOCK_MONOTONIC, &finish_tot);
-    elapsed_tot = (finish_tot.tv_sec - start_tot.tv_sec);
-    elapsed_tot += (finish_tot.tv_nsec - start_tot.tv_nsec) / 1000000000.0;
-    printf("\tFound %lu possible merges\n", (uint64_t)merge_count);
-    printf("\tSurviving clusters %lu\n", (uint64_t)final_cluster_count);
-    printf("\tTotal time: %.3lfs\n\n", elapsed_tot);
+        clock_gettime(CLOCK_MONOTONIC, &finish_tot);
+        elapsed_tot = (finish_tot.tv_sec - start_tot.tv_sec);
+        elapsed_tot += (finish_tot.tv_nsec - start_tot.tv_nsec) / 1000000000.0;
+        printf("\tFound %lu possible merges\n", (uint64_t)merge_count);
+        printf("\tSurviving clusters %lu\n", (uint64_t)final_cluster_count);
+        printf("\tTotal time: %.3lfs\n\n", elapsed_tot);
+    }
 
   #undef  borders  
 }
 
 
-void Heuristic3(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, int halo)
+void Heuristic3(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, int halo, int num_threads, bool verbose)
 {
 	if(cluster -> UseSparseBorders)
 	{
-		Heuristic3_sparse(cluster, dpInfo,  Z,  halo);
+		Heuristic3_sparse(cluster, dpInfo,  Z,  halo, num_threads, verbose);
 	}
 	else
 	{
-		Heuristic3_dense(cluster, dpInfo,  Z,  halo);
+		Heuristic3_dense(cluster, dpInfo,  Z,  halo, num_threads, verbose);
 	}
 }
 
@@ -1791,10 +2060,11 @@ Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, in
 			p[i*ncols + j].log_rho = -99999.;
 			p[i*ncols + j].g = -99999.; 
 			p[i*ncols + j].array_idx = i*ncols + j;
+			p[i*ncols + j].cluster_idx = -1;
 		}
 
 	}
-	for(int idx = 0; idx < nrows*ncols; ++idx) mask[idx] = mask[idx] && tmp_mask[idx];
+	for(int idx = 0; idx < nrows*ncols; ++idx) mask[idx] = mask[idx] * tmp_mask[idx];
 	free(tmp_mask);
 
     clock_gettime(CLOCK_MONOTONIC, &finish_tot);

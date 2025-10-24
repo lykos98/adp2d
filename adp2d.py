@@ -148,7 +148,6 @@ def _compute_coms_and_covs(image: np.array,
                 y_limits[lab,1] = max(y_limits[lab,1], yy)
                 flux[lab] += image[yy,xx]
 
-
                 
     for lab_idx in range(nlabels):
         if areas[lab_idx] > 1:
@@ -248,6 +247,12 @@ class Data():
         self.__H1.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), ct.c_int32, ct.c_int32]
         self.__H1.restype = Clusters
 
+        self.__adpWrapper = self.lib.adpWrapper
+        #Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, float Z, int min_area, bool halo, bool split_per_thread) 
+        self.__adpWrapper.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), 
+                                      ct.c_int32, ct.c_int32, ct.c_int32, ct.c_float, ct.c_bool, ct.c_bool]
+        self.__adpWrapper.restype = Clusters
+
         self.__ClustersAllocate = self.lib.Clusters_allocate
         self.__ClustersAllocate.argtypes = [ct.POINTER(Clusters), ct.c_int]
 
@@ -323,7 +328,7 @@ class Data():
         self.state["density"] = True
 
 
-    def computeClusteringADP(self,Z : float, halo = True, useSparse = "auto"):
+    def computeClusteringADP(self,Z : float, halo = False, min_area = 10, useSparse = "auto", splitPerThread = False):
 
         """Compute clustering via the Advanced Density Peak method
 
@@ -346,14 +351,15 @@ class Data():
         else:
             self.state["useSparse"] = False
 
+        # change import of libs, import only the wrapper 
         self.state["computeHalo"] = halo 
         self.Z = Z
         self.n = np.prod(self.img.shape)
-        self.__computeCorrection(self.__datapoints, self.mask, self.n, self.Z)
-        self.__clusters = self.__H1(self.__datapoints, self.mask, self.nrows, self.ncols)
-        self.__ClustersAllocate(ct.pointer(self.__clusters), 1)
-        self.__H2(ct.pointer(self.__clusters), self.__datapoints, self.mask, self.nrows, self.ncols)
-        self.__H3(ct.pointer(self.__clusters), self.__datapoints, self.Z, 1 if halo else 0 )
+        self.min_area = min_area
+        
+        self.halo = halo
+        self.__clusters = self.__adpWrapper(self.__datapoints, self.mask, self.nrows, self.ncols, self.min_area, self.Z, self.halo, splitPerThread)
+
         self.state["clustering"] = True
         self.clusterAssignment = None
 
@@ -545,16 +551,16 @@ class Data():
         x_limits            = np.zeros((nlabs, 2), dtype = np.int32)
         y_limits            = np.zeros((nlabs, 2), dtype = np.int32)
 
-        # Use ThreadPoolExecutor to parallelize the computation
-
+        print("Computing cov matrices")
         _compute_coms_and_covs(self.img, segmentation_map, self.mask, label_idx, coms, 
                                areas, covariance_matrices, parent_id, flux, x_limits, y_limits)
+        print("Computing cov prperties")
         _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
 
         f = np.where(areas > min_area)
 
         self.sources_properties = {}
-        self.sources_properties["centers_of_mass"]   = coms[f].T
+        self.sources_properties["centers_of_mass"]   = coms[f]
         self.sources_properties["areas"]             = areas[f]
         self.sources_properties["ellipticities"]     = ellipticities[f]
         self.sources_properties["major_axes"]        = b_images[f]

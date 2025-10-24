@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 #define DTHR 23.92812698
 #define PI_F 3.1415926f
@@ -130,11 +131,9 @@ FLOAT_TYPE avg(const FLOAT_TYPE *x, const idx_t n);
 int cmpPP(const void *p1, const void *p2);
 void computeCorrection(Datapoint_info *particles, int* mask, idx_t n, FLOAT_TYPE Z);
 
-Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols);
-//Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, int nrows, int ncols);
-void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols);
-//void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols);
-void Heuristic3(Clusters *cluster, Datapoint_info *particles, FLOAT_TYPE Z,int halo);
+Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int num_threads, bool verbose);
+void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int num_threads, bool verbose);
+void Heuristic3(Clusters *cluster, Datapoint_info *particles, FLOAT_TYPE Z,int halo, int num_threads, bool verbose);
 void freeDatapointArray(Datapoint_info* d, size_t n);
 
 Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, int ncols, int r);
