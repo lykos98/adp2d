@@ -87,7 +87,8 @@ class Clusters(ct.Structure):
 def _compute_coms_and_covs(image: np.array,
                            segmentation_map: np.array, 
                            mask: np.array, 
-                           coms: np.array, areas: np.array,
+                           coms: np.array, 
+                           areas: np.array,
                            covariance_matrices: np.array,
                            parent_id: np.array,
                            flux: np.array,
@@ -270,6 +271,37 @@ class Data():
             np.ctypeslib.ndpointer(np.int32),
             ct.c_uint64,
         ]
+
+        # void compute_eigensystems(FLOAT_TYPE* cov_matrices, FLOAT_TYPE* lambdas, FLOAT_TYPE* vs, int nclusters)
+        self.__compute_eigensystems = self.lib.compute_eigensystems
+        self.__compute_eigensystems.argtypes = [np.ctypeslib.ndpointer(ct.c_double),
+                                                np.ctypeslib.ndpointer(ct.c_double),
+                                                np.ctypeslib.ndpointer(ct.c_double),
+                                                ct.c_int32]
+
+
+        # void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask, 
+        #                   int ncols, int nrows, int nclusters, 
+        #                   FLOAT_TYPE* centers_of_mass, 
+        #                   FLOAT_TYPE* cov_matrices, 
+        #                   FLOAT_TYPE* flux,
+        #                   FLOAT_TYPE* areas,
+        #                   int* parent_id,
+        #                   int* x_limits,
+        #                   int* y_limits)
+        
+        self.__compute_covs = self.lib.compute_covs
+        self.__compute_covs.argtypes = [np.ctypeslib.ndpointer(ct.c_double),
+                                        np.ctypeslib.ndpointer(ct.c_int32),
+                                        np.ctypeslib.ndpointer(ct.c_int32),
+                                        ct.c_int32, ct.c_int32, ct.c_int32,
+                                        np.ctypeslib.ndpointer(ct.c_double),
+                                        np.ctypeslib.ndpointer(ct.c_double),
+                                        np.ctypeslib.ndpointer(ct.c_double),
+                                        np.ctypeslib.ndpointer(ct.c_double),
+                                        np.ctypeslib.ndpointer(ct.c_int32),
+                                        np.ctypeslib.ndpointer(ct.c_int32),
+                                        np.ctypeslib.ndpointer(ct.c_int32)]
 
 
         #void tiny_colorize(
@@ -457,10 +489,10 @@ class Data():
             fits.Column(name = 'POSITION_ANGLE', format = 'D'),
             fits.Column(name = 'SEMI_MAJOR_ANGLE', format = 'D'),
             fits.Column(name = 'FLUX_TOT', format = 'D'),
-            fits.Column(name = 'ISOAREA', format = 'J'),
+            fits.Column(name = 'ISOAREA', format = 'D'),
             fits.Column(name = 'SKIPPED', format = 'J'),]
-
         if self.sources_properties is None:
+
             raise ValueError("Sources properties are not computed")
 
         nsources =  self.sources_properties["areas"].shape[0]
@@ -473,8 +505,8 @@ class Data():
             for i in range(nsources):
                 rec_array[i]['SOURCE_ID']        = i
                 rec_array[i]['PARENT_ID']        = self.sources_properties['parent_id'][i] 
-                rec_array[i]['X_CENTER']         = int(self.sources_properties['centers_of_mass'][i][0])
-                rec_array[i]['Y_CENTER']         = int(self.sources_properties['centers_of_mass'][i][1])
+                rec_array[i]['X_CENTER']         = self.sources_properties['centers_of_mass'][i][0]
+                rec_array[i]['Y_CENTER']         = self.sources_properties['centers_of_mass'][i][1]
                 rec_array[i]['XWIN_WORLD']       = -1
                 rec_array[i]['YWIN_WORLD']       = -1
                 rec_array[i]['X_MIN']            = self.sources_properties["x_limits"][i][0]
@@ -487,15 +519,15 @@ class Data():
                 rec_array[i]['R_MAX']            = -1
                 rec_array[i]['POSITION_ANGLE']   = -1
                 rec_array[i]['SEMI_MAJOR_ANGLE'] = self.sources_properties["semi_major_angles"][i]
-                rec_array[i]['FLUX_TOT']         = int(self.sources_properties["flux"][i])
+                rec_array[i]['FLUX_TOT']         = self.sources_properties["flux"][i]
                 rec_array[i]['ISOAREA']          = self.sources_properties["areas"][i]
                 rec_array[i]['SKIPPED']          = -1
         else:
             # handle the case in which we have only one source
             rec_array['SOURCE_ID']        = 0
             rec_array['PARENT_ID']        = self.sources_properties['parent_id'] 
-            rec_array['X_CENTER']         = int(self.sources_properties['centers_of_mass'][0])
-            rec_array['Y_CENTER']         = int(self.sources_properties['centers_of_mass'][1])
+            rec_array['X_CENTER']         = self.sources_properties['centers_of_mass'][0]
+            rec_array['Y_CENTER']         = self.sources_properties['centers_of_mass'][1]
             rec_array['XWIN_WORLD']       = -1
             rec_array['YWIN_WORLD']       = -1
             rec_array['X_MIN']            = self.sources_properties["x_limits"][0][0]
@@ -508,7 +540,7 @@ class Data():
             rec_array['R_MAX']            = -1
             rec_array['POSITION_ANGLE']   = -1
             rec_array['SEMI_MAJOR_ANGLE'] = self.sources_properties["semi_major_angles"]
-            rec_array['FLUX_TOT']         = int(self.sources_properties["flux"])
+            rec_array['FLUX_TOT']         = self.sources_properties["flux"]
             rec_array['ISOAREA']          = self.sources_properties["areas"]
             rec_array['SKIPPED']          = -1
 
@@ -524,9 +556,10 @@ class Data():
 
         segmentation_map = self.clusterAssignment.reshape((self.nrows, self.ncols)).astype(np.int32)
 
+        nrows, ncols = self.data.shape
         nlabs = self.__clusters.centers.count
 
-        coms = np.zeros((nlabs,2), dtype = np.int32)
+        coms = np.zeros((nlabs,2), dtype = np.float64)
         covariance_matrices = np.zeros((nlabs,2,2), dtype = np.float64)
         areas               = np.zeros((nlabs), dtype = np.float64)
         a_images            = np.zeros((nlabs), dtype = np.float64)
@@ -534,20 +567,40 @@ class Data():
         ellipticities       = np.zeros((nlabs), dtype = np.float64)
         semi_major_angles   = np.zeros((nlabs), dtype = np.float64)
         flux                = np.zeros((nlabs), dtype = np.float64)
-        parent_id           = np.zeros((nlabs), dtype = np.int64)
+        parent_id           = np.zeros((nlabs), dtype = np.int32)
         x_limits            = np.zeros((nlabs, 2), dtype = np.int32)
         y_limits            = np.zeros((nlabs, 2), dtype = np.int32)
 
+        # TODO: implement this with pure C, leave then a flag
         print("Computing cov matrices")
         start_sub = time.monotonic()
-        _compute_coms_and_covs(self.img, segmentation_map, self.mask, coms, 
-                               areas, covariance_matrices, parent_id, flux, x_limits, y_limits)
+        #_compute_coms_and_covs(self.img, segmentation_map, self.mask, coms, 
+        #                       areas, covariance_matrices, parent_id, flux, x_limits, y_limits)
+        #
+        
+        self.__compute_covs(self.data, segmentation_map, self.mask, nrows, ncols, nlabs, coms, covariance_matrices,
+                            flux, areas, parent_id, x_limits, y_limits)
+
         stop_sub = time.monotonic()
         print(f"    Time: {stop_sub - start_sub: .2f}")
-        print("Computing cov features")
 
+        print("Computing cov features")
         start_sub = time.monotonic()
-        _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
+
+        eigenvals = np.zeros((nlabs,2), dtype = np.float64)
+        eigenvecs = np.zeros((nlabs,4), dtype = np.float64)
+        self.__compute_eigensystems(covariance_matrices, eigenvals, eigenvecs, nlabs)
+
+        # Asterism like ellipticity
+        sig_x         = np.sqrt(eigenvals[:, 0])
+        sig_y         = np.sqrt(eigenvals[:, 1])
+        a_images      = np.sqrt(sig_x * sig_x + sig_y * sig_y)
+        b_images      = sig_y / sig_x * a_images
+        ellipticities = (a_images - b_images) / a_images
+        semi_major_angles = np.rad2deg(np.arctan2(eigenvecs[:, 1], eigenvecs[:, 0]))
+
+        # Asterism like PA
+
         stop_sub = time.monotonic()
         print(f"    Time: {stop_sub - start_sub: .2f}")
 

@@ -1,5 +1,5 @@
 LIBRARIES=-lm -fopenmp
-OPTIM=-O3 -mavx2 -march=native  -Wall -Wextra -DUSE_NORM
+OPTIM=-O3 -mavx2 -march=native 
 #LIBRARIES=-lm
 #OPTIM=-O0
 DEBUG=-ggdb

@@ -349,7 +349,11 @@ typedef struct {
 
 Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int min_size, float Z, bool halo, bool split_per_thread) 
 {
-    int machine_threads = omp_get_num_threads(); 
+    #ifdef OPENMP
+        int machine_threads = omp_get_num_threads(); 
+    #else
+        int machine_threads = 1; 
+    #endif
     Clusters c = {0};
     // this has to be called 
     printf("Computing correction\n");
@@ -2165,6 +2169,249 @@ void tiny_colorize(
 #undef BLUE
 #undef GREEN
 #undef RED
+
+void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask, 
+                  int nrows, int ncols, int nclusters, 
+                  FLOAT_TYPE* centers_of_mass, 
+                  FLOAT_TYPE* cov_matrices, 
+                  FLOAT_TYPE* flux,
+                  FLOAT_TYPE* areas,
+                  int* parent_id,
+                  int* x_limits,
+                  int* y_limits)
+{
+    #define LOWER_BOUND(x) (2*x) 
+    #define UPPER_BOUND(x) (2*x + 1) 
+    // initialization
+    #pragma omp parallel for
+    for(int i = 0; i < nclusters; ++i)
+    {
+        centers_of_mass[2*i]     = 0;
+        centers_of_mass[2*i + 1] = 0;
+
+        cov_matrices[4*i]     = 0.;
+        cov_matrices[4*i + 1] = 0.;
+        cov_matrices[4*i + 2] = 0.;
+        cov_matrices[4*i + 3] = 0.;
+
+        parent_id[i] = -1;
+
+        x_limits[LOWER_BOUND(i)] = ncols; 
+        x_limits[UPPER_BOUND(i)] = 0;
+
+        y_limits[LOWER_BOUND(i)] = nrows; 
+        y_limits[UPPER_BOUND(i)] = 0;
+
+        flux[i] = 0.;
+        areas[i] = 0;
+    }
+
+    #pragma omp parallel
+    {
+        FLOAT_TYPE* pvt_centers_of_mass = (FLOAT_TYPE*)calloc(2 * nclusters, sizeof(FLOAT_TYPE));
+        FLOAT_TYPE* pvt_cov_matrices = (FLOAT_TYPE*)calloc(4 * nclusters, sizeof(FLOAT_TYPE));
+        FLOAT_TYPE* pvt_flux = (FLOAT_TYPE*)calloc(nclusters, sizeof(FLOAT_TYPE));
+
+        int* pvt_x_limits = (int*)calloc(2 * nclusters, sizeof(int));
+        int* pvt_y_limits = (int*)calloc(2 * nclusters, sizeof(int));
+        FLOAT_TYPE* pvt_areas    = (FLOAT_TYPE*)calloc(nclusters, sizeof(FLOAT_TYPE));
+
+        for(int i = 0; i < nclusters; ++i)
+        {
+            pvt_x_limits[LOWER_BOUND(i)] = ncols; 
+            pvt_x_limits[UPPER_BOUND(i)] = 0;
+            pvt_y_limits[LOWER_BOUND(i)] = nrows; 
+            pvt_y_limits[UPPER_BOUND(i)] = 0;
+        }
+
+        #pragma omp for
+        for(int yy = 0; yy < nrows; ++yy)
+            for(int xx = 0; xx < ncols; ++xx)
+            {
+                int lab = segmentation_map[yy*ncols + xx]; 
+                if (lab != -1)
+                {
+                    pvt_centers_of_mass[2*lab] += (float)xx;
+                    pvt_centers_of_mass[2*lab + 1] += (float)yy;
+                    pvt_areas[lab] += 1;
+                    if(parent_id[lab] == -1) parent_id[lab] = mask[yy*ncols + xx];
+
+                    pvt_x_limits[LOWER_BOUND(lab)] = MIN(yy, pvt_x_limits[LOWER_BOUND(lab)]);
+                    pvt_x_limits[UPPER_BOUND(lab)] = MAX(yy, pvt_x_limits[UPPER_BOUND(lab)]);
+
+                    pvt_y_limits[LOWER_BOUND(lab)] = MIN(xx, pvt_y_limits[LOWER_BOUND(lab)]);
+                    pvt_y_limits[UPPER_BOUND(lab)] = MAX(xx, pvt_y_limits[UPPER_BOUND(lab)]);
+                }
+            }
+
+        // reduction
+        #pragma omp critical (merging_coms)
+        {
+            for(int i = 0; i < nclusters; ++i)
+            {
+                centers_of_mass[2*i]     += pvt_centers_of_mass[2*i];
+                centers_of_mass[2*i + 1] += pvt_centers_of_mass[2*i + 1];
+
+                areas[i] += pvt_areas[i];
+
+                x_limits[LOWER_BOUND(i)] = MIN(x_limits[LOWER_BOUND(i)], pvt_x_limits[LOWER_BOUND(i)]);
+                x_limits[UPPER_BOUND(i)] = MAX(x_limits[UPPER_BOUND(i)], pvt_x_limits[UPPER_BOUND(i)]);
+
+                y_limits[LOWER_BOUND(i)] = MIN(y_limits[LOWER_BOUND(i)], pvt_y_limits[LOWER_BOUND(i)]);
+                y_limits[UPPER_BOUND(i)] = MAX(x_limits[UPPER_BOUND(i)], pvt_y_limits[UPPER_BOUND(i)]);
+            }
+        }
+
+        #pragma omp barrier
+
+
+        #pragma omp for
+        for(int i = 0; i < nclusters; ++i)
+        {
+            centers_of_mass[2*i]     = centers_of_mass[2*i]    /areas[i];
+            centers_of_mass[2*i + 1] = centers_of_mass[2*i + 1]/areas[i];
+        }
+
+
+        #pragma omp for
+        for(int yy = 0; yy < nrows; ++yy)
+            for(int xx = 0; xx < ncols; ++xx)
+            {
+                int lab = segmentation_map[yy*ncols + xx]; 
+                if(lab != -1)
+                {
+                    float x_n = (float)xx - (float)centers_of_mass[2*lab];
+                    float y_n = (float)yy - (float)centers_of_mass[2*lab + 1];
+                    pvt_flux[lab] += image[yy*ncols + xx];
+
+                    pvt_cov_matrices[4*lab    ] += x_n * x_n;
+                    pvt_cov_matrices[4*lab + 1] += x_n * y_n;
+                    pvt_cov_matrices[4*lab + 2] += x_n * y_n;
+                    pvt_cov_matrices[4*lab + 3] += y_n * y_n;
+
+                }
+            }
+
+        #pragma omp critical (merging_cov)
+        {
+            for(int lab = 0; lab < nclusters; ++lab)
+            {
+                    cov_matrices[4*lab]     += pvt_cov_matrices[4*lab];
+                    cov_matrices[4*lab + 1] += pvt_cov_matrices[4*lab + 1];
+                    cov_matrices[4*lab + 2] += pvt_cov_matrices[4*lab + 2];
+                    cov_matrices[4*lab + 3] += pvt_cov_matrices[4*lab + 3];
+
+                    x_limits[2*lab    ] = MIN(pvt_x_limits[2*lab], x_limits[2*lab]);
+                    x_limits[2*lab + 1] = MAX(pvt_x_limits[2*lab + 1], x_limits[2*lab + 1]);
+
+                    y_limits[2*lab]     = MIN(pvt_y_limits[2*lab], y_limits[2*lab]);
+                    y_limits[2*lab + 1] = MAX(pvt_y_limits[2*lab + 1], y_limits[2*lab + 1]);
+                    
+                    flux[lab] += pvt_flux[lab];
+            }
+        }
+
+        #pragma omp barrier
+
+        #pragma omp for
+        for(int lab = 0; lab < nclusters; ++lab)
+        {
+                cov_matrices[4*lab]     = cov_matrices[4*lab]    /(areas[lab]-1);
+                cov_matrices[4*lab + 1] = cov_matrices[4*lab + 1]/(areas[lab]-1);
+                cov_matrices[4*lab + 2] = cov_matrices[4*lab + 2]/(areas[lab]-1);
+                cov_matrices[4*lab + 3] = cov_matrices[4*lab + 3]/(areas[lab]-1);
+        }
+ 
+        free(pvt_centers_of_mass);
+        free(pvt_cov_matrices);
+        free(pvt_flux);
+        free(pvt_x_limits);
+        free(pvt_y_limits);
+        free(pvt_areas);
+
+    }
+
+    #undef LOWER_BOUND
+    #undef UPPER_BOUND
+}
+
+
+// FIX: to check
+void compute_eigensystem_2x2(const double *A, double *lambda, double *V) {
+    // A is symmetric: [[a, b], [b, d]]
+    double a = A[0];
+    double b = A[1];
+    double d = A[3]; // Note: A[2] is also 'b'
+
+    // Use a small tolerance for comparison with zero
+    const double EPS = 1e-9;
+
+    // 1. Compute Eigenvalues (lambda)
+    // Formula: lambda = ( (a+d) +/- sqrt((a-d)^2 + 4*b^2) ) / 2
+    double sum = a + d;
+    double diff_sq = (a - d) * (a - d);
+    double four_b_sq = 4.0 * b * b;
+
+    // Discriminant Delta = (a-d)^2 + 4*b^2. Always non-negative.
+    double delta = diff_sq + four_b_sq;
+    double sqrt_delta = sqrt(delta);
+
+    // Store eigenvalues (lambda[0] = lambda1, lambda[1] = lambda2)
+    lambda[0] = (sum + sqrt_delta) / 2.0; // Larger eigenvalue
+    lambda[1] = (sum - sqrt_delta) / 2.0; // Smaller eigenvalue
+
+    // 2. Compute Eigenvectors (V)
+    double lambda1 = lambda[0];
+    double lambda2 = lambda[1];
+
+    // --- Eigenvector 1 (for lambda1) ---
+    // General case: v1 = [ b, lambda1 - a ]^T
+    if (fabs(b) < EPS) {
+        // Case: Diagonal matrix (b=0)
+        // Eigenvectors are [1, 0] and [0, 1].
+        V[0] = 1.0;
+        V[1] = 0.0;
+    } else {
+        // Standard case: [ b, lambda1 - a ]^T
+        V[0] = b;
+        V[1] = lambda1 - a;
+    }
+    
+    // --- Eigenvector 2 (for lambda2) ---
+    // V[2], V[3] store v2
+    // General case: v2 = [ b, lambda2 - a ]^T
+    if (fabs(b) < EPS) {
+        // Case: Diagonal matrix (b=0)
+        // Eigenvectors are [1, 0] and [0, 1].
+        // If lambda1 == lambda2, use the orthogonal basis [0, 1] for v2
+        if (fabs(lambda1 - lambda2) < EPS) {
+            V[2] = 0.0;
+            V[3] = 1.0;
+        } else {
+             // Distinct eigenvalues: The eigenvectors are [1, 0] and [0, 1].
+            V[2] = 0.0;
+            V[3] = 1.0;
+        }
+    } else {
+        // Standard case: [ b, lambda2 - a ]^T
+        V[2] = b;
+        V[3] = lambda2 - a;
+    }
+
+}
+
+void compute_eigensystems(FLOAT_TYPE* cov_matrices, FLOAT_TYPE* lambdas, FLOAT_TYPE* vs, int nclusters)
+{
+    #pragma omp parallel for
+    for(int lab = 0; lab < nclusters; ++lab)
+    {
+        compute_eigensystem_2x2(cov_matrices + lab*4, lambdas + 2*lab, vs + 4*lab);
+    }
+}
+
+
+
+
 
 void export_cluster_assignment(Datapoint_info* points, int* labels, idx_t n)
 {
