@@ -2258,7 +2258,7 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
                 x_limits[UPPER_BOUND(i)] = MAX(x_limits[UPPER_BOUND(i)], pvt_x_limits[UPPER_BOUND(i)]);
 
                 y_limits[LOWER_BOUND(i)] = MIN(y_limits[LOWER_BOUND(i)], pvt_y_limits[LOWER_BOUND(i)]);
-                y_limits[UPPER_BOUND(i)] = MAX(x_limits[UPPER_BOUND(i)], pvt_y_limits[UPPER_BOUND(i)]);
+                y_limits[UPPER_BOUND(i)] = MAX(y_limits[UPPER_BOUND(i)], pvt_y_limits[UPPER_BOUND(i)]);
             }
         }
 
@@ -2304,7 +2304,7 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
                     x_limits[2*lab    ] = MIN(pvt_x_limits[2*lab], x_limits[2*lab]);
                     x_limits[2*lab + 1] = MAX(pvt_x_limits[2*lab + 1], x_limits[2*lab + 1]);
 
-                    y_limits[2*lab]     = MIN(pvt_y_limits[2*lab], y_limits[2*lab]);
+                    y_limits[2*lab    ] = MIN(pvt_y_limits[2*lab], y_limits[2*lab]);
                     y_limits[2*lab + 1] = MAX(pvt_y_limits[2*lab + 1], y_limits[2*lab + 1]);
                     
                     flux[lab] += pvt_flux[lab];
