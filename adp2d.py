@@ -87,8 +87,8 @@ class Clusters(ct.Structure):
 def _compute_coms_and_covs(image: np.array,
                            segmentation_map: np.array, 
                            mask: np.array, 
-                           label_idx: np.array, 
-                           coms: np.array, areas: np.array,
+                           coms: np.array, 
+                           areas: np.array,
                            covariance_matrices: np.array,
                            parent_id: np.array,
                            flux: np.array,
@@ -97,7 +97,6 @@ def _compute_coms_and_covs(image: np.array,
     """
         segmentation_map: np.array( nrows, ncols )
         mask: np.array
-        label_idx: map from label to the correct index
         coms: np.array( nlabels, 2 )
         areas: np.array( nlabels )
         covariance_matrices: np.array( nlabels, 2, 2)
@@ -118,28 +117,25 @@ def _compute_coms_and_covs(image: np.array,
         for yy in range(yrange):
             lab = segmentation_map[yy,xx] 
             if lab != -1:
-                lab_idx = label_idx[lab]
-                coms[lab_idx,0] += float(xx)
-                coms[lab_idx,1] += float(yy)
-                areas[lab_idx]  += 1.
-                parent_id[lab_idx] = mask[yy,xx]
+                coms[lab,0] += float(xx)
+                coms[lab,1] += float(yy)
+                areas[lab]  += 1.
+                parent_id[lab] = mask[yy,xx]
 
-    for lab_idx in range(nlabels):
-        if areas[lab_idx] > 1:
-            coms[lab_idx] = coms[lab_idx]/areas[lab_idx]
+    for lab in range(nlabels):
+        coms[lab] = coms[lab]/areas[lab]
 
     for xx in range(xrange):
         for yy in range(yrange):
             lab = segmentation_map[yy,xx] 
             if lab != -1:
-                lab_idx = label_idx[lab]
                 
-                x_n = float(xx) - coms[lab_idx,0]
-                y_n = float(yy) - coms[lab_idx,1]
-                covariance_matrices[lab_idx, 0, 0] += x_n ** 2
-                covariance_matrices[lab_idx, 0, 1] += x_n * y_n
-                covariance_matrices[lab_idx, 1, 0] += x_n * y_n
-                covariance_matrices[lab_idx, 1, 1] += y_n ** 2
+                x_n = float(xx) - coms[lab,0]
+                y_n = float(yy) - coms[lab,1]
+                covariance_matrices[lab, 0, 0] += x_n ** 2
+                covariance_matrices[lab, 0, 1] += x_n * y_n
+                covariance_matrices[lab, 1, 0] += x_n * y_n
+                covariance_matrices[lab, 1, 1] += y_n ** 2
 
                 x_limits[lab,0] = min(x_limits[lab,0], xx)
                 x_limits[lab,1] = max(x_limits[lab,1], xx)
@@ -148,11 +144,9 @@ def _compute_coms_and_covs(image: np.array,
                 y_limits[lab,1] = max(y_limits[lab,1], yy)
                 flux[lab] += image[yy,xx]
 
-
                 
-    for lab_idx in range(nlabels):
-        if areas[lab_idx] > 1:
-            covariance_matrices[lab_idx,:,:] = covariance_matrices[lab_idx,:,:]/(areas[lab_idx] - 1)
+    for lab in range(nlabels):
+        covariance_matrices[lab,:,:] = covariance_matrices[lab,:,:]/(areas[lab] - 1)
 
 @numba.njit(parallel = True)
 def _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles):
@@ -248,6 +242,12 @@ class Data():
         self.__H1.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), ct.c_int32, ct.c_int32]
         self.__H1.restype = Clusters
 
+        self.__adpWrapper = self.lib.adpWrapper
+        #Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, float Z, int min_area, bool halo, bool split_per_thread) 
+        self.__adpWrapper.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), 
+                                      ct.c_int32, ct.c_int32, ct.c_int32, ct.c_float, ct.c_bool, ct.c_bool]
+        self.__adpWrapper.restype = Clusters
+
         self.__ClustersAllocate = self.lib.Clusters_allocate
         self.__ClustersAllocate.argtypes = [ct.POINTER(Clusters), ct.c_int]
 
@@ -271,6 +271,37 @@ class Data():
             np.ctypeslib.ndpointer(np.int32),
             ct.c_uint64,
         ]
+
+        # void compute_eigensystems(FLOAT_TYPE* cov_matrices, FLOAT_TYPE* lambdas, FLOAT_TYPE* vs, int nclusters)
+        self.__compute_eigensystems = self.lib.compute_eigensystems
+        self.__compute_eigensystems.argtypes = [np.ctypeslib.ndpointer(ct.c_double),
+                                                np.ctypeslib.ndpointer(ct.c_double),
+                                                np.ctypeslib.ndpointer(ct.c_double),
+                                                ct.c_int32]
+
+
+        # void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask, 
+        #                   int ncols, int nrows, int nclusters, 
+        #                   FLOAT_TYPE* centers_of_mass, 
+        #                   FLOAT_TYPE* cov_matrices, 
+        #                   FLOAT_TYPE* flux,
+        #                   FLOAT_TYPE* areas,
+        #                   int* parent_id,
+        #                   int* x_limits,
+        #                   int* y_limits)
+        
+        self.__compute_covs = self.lib.compute_covs
+        self.__compute_covs.argtypes = [np.ctypeslib.ndpointer(ct.c_double),
+                                        np.ctypeslib.ndpointer(ct.c_int32),
+                                        np.ctypeslib.ndpointer(ct.c_int32),
+                                        ct.c_int32, ct.c_int32, ct.c_int32,
+                                        np.ctypeslib.ndpointer(ct.c_double),
+                                        np.ctypeslib.ndpointer(ct.c_double),
+                                        np.ctypeslib.ndpointer(ct.c_double),
+                                        np.ctypeslib.ndpointer(ct.c_double),
+                                        np.ctypeslib.ndpointer(ct.c_int32),
+                                        np.ctypeslib.ndpointer(ct.c_int32),
+                                        np.ctypeslib.ndpointer(ct.c_int32)]
 
 
         #void tiny_colorize(
@@ -323,7 +354,7 @@ class Data():
         self.state["density"] = True
 
 
-    def computeClusteringADP(self,Z : float, halo = True, useSparse = "auto"):
+    def computeClusteringADP(self,Z : float, halo = False, min_area = 10, useSparse = "auto", splitPerThread = False):
 
         """Compute clustering via the Advanced Density Peak method
 
@@ -346,14 +377,15 @@ class Data():
         else:
             self.state["useSparse"] = False
 
+        # change import of libs, import only the wrapper 
         self.state["computeHalo"] = halo 
         self.Z = Z
         self.n = np.prod(self.img.shape)
-        self.__computeCorrection(self.__datapoints, self.mask, self.n, self.Z)
-        self.__clusters = self.__H1(self.__datapoints, self.mask, self.nrows, self.ncols)
-        self.__ClustersAllocate(ct.pointer(self.__clusters), 1)
-        self.__H2(ct.pointer(self.__clusters), self.__datapoints, self.mask, self.nrows, self.ncols)
-        self.__H3(ct.pointer(self.__clusters), self.__datapoints, self.Z, 1 if halo else 0 )
+        self.min_area = min_area
+        
+        self.halo = halo
+        self.__clusters = self.__adpWrapper(self.__datapoints, self.mask, self.nrows, self.ncols, self.min_area, self.Z, self.halo, splitPerThread)
+
         self.state["clustering"] = True
         self.clusterAssignment = None
 
@@ -457,10 +489,10 @@ class Data():
             fits.Column(name = 'POSITION_ANGLE', format = 'D'),
             fits.Column(name = 'SEMI_MAJOR_ANGLE', format = 'D'),
             fits.Column(name = 'FLUX_TOT', format = 'D'),
-            fits.Column(name = 'ISOAREA', format = 'J'),
+            fits.Column(name = 'ISOAREA', format = 'D'),
             fits.Column(name = 'SKIPPED', format = 'J'),]
-
         if self.sources_properties is None:
+
             raise ValueError("Sources properties are not computed")
 
         nsources =  self.sources_properties["areas"].shape[0]
@@ -473,8 +505,8 @@ class Data():
             for i in range(nsources):
                 rec_array[i]['SOURCE_ID']        = i
                 rec_array[i]['PARENT_ID']        = self.sources_properties['parent_id'][i] 
-                rec_array[i]['X_CENTER']         = int(self.sources_properties['centers_of_mass'][i][0])
-                rec_array[i]['Y_CENTER']         = int(self.sources_properties['centers_of_mass'][i][1])
+                rec_array[i]['X_CENTER']         = self.sources_properties['centers_of_mass'][i][0]
+                rec_array[i]['Y_CENTER']         = self.sources_properties['centers_of_mass'][i][1]
                 rec_array[i]['XWIN_WORLD']       = -1
                 rec_array[i]['YWIN_WORLD']       = -1
                 rec_array[i]['X_MIN']            = self.sources_properties["x_limits"][i][0]
@@ -487,15 +519,15 @@ class Data():
                 rec_array[i]['R_MAX']            = -1
                 rec_array[i]['POSITION_ANGLE']   = -1
                 rec_array[i]['SEMI_MAJOR_ANGLE'] = self.sources_properties["semi_major_angles"][i]
-                rec_array[i]['FLUX_TOT']         = int(self.sources_properties["flux"][i])
+                rec_array[i]['FLUX_TOT']         = self.sources_properties["flux"][i]
                 rec_array[i]['ISOAREA']          = self.sources_properties["areas"][i]
                 rec_array[i]['SKIPPED']          = -1
         else:
             # handle the case in which we have only one source
             rec_array['SOURCE_ID']        = 0
             rec_array['PARENT_ID']        = self.sources_properties['parent_id'] 
-            rec_array['X_CENTER']         = int(self.sources_properties['centers_of_mass'][0])
-            rec_array['Y_CENTER']         = int(self.sources_properties['centers_of_mass'][1])
+            rec_array['X_CENTER']         = self.sources_properties['centers_of_mass'][0]
+            rec_array['Y_CENTER']         = self.sources_properties['centers_of_mass'][1]
             rec_array['XWIN_WORLD']       = -1
             rec_array['YWIN_WORLD']       = -1
             rec_array['X_MIN']            = self.sources_properties["x_limits"][0][0]
@@ -508,7 +540,7 @@ class Data():
             rec_array['R_MAX']            = -1
             rec_array['POSITION_ANGLE']   = -1
             rec_array['SEMI_MAJOR_ANGLE'] = self.sources_properties["semi_major_angles"]
-            rec_array['FLUX_TOT']         = int(self.sources_properties["flux"])
+            rec_array['FLUX_TOT']         = self.sources_properties["flux"]
             rec_array['ISOAREA']          = self.sources_properties["areas"]
             rec_array['SKIPPED']          = -1
 
@@ -521,19 +553,13 @@ class Data():
         start = time.time()
         print("Computing sources properties")
         self.getClusterAssignment()
-        # Get unique labels in dadaC segmentation map
-        unique_labels = np.unique(self.clusterAssignment)
+
         segmentation_map = self.clusterAssignment.reshape((self.nrows, self.ncols)).astype(np.int32)
 
-        label_idx = np.array([0 for _ in range(max(unique_labels + 1))], dtype = np.int32)
+        nrows, ncols = self.data.shape
+        nlabs = self.__clusters.centers.count
 
-        for i,l in enumerate(unique_labels[1:]):
-            label_idx[l] = i
-
-
-        nlabs = len(unique_labels) - 1
-
-        coms = np.zeros((nlabs,2), dtype = np.int32)
+        coms = np.zeros((nlabs,2), dtype = np.float64)
         covariance_matrices = np.zeros((nlabs,2,2), dtype = np.float64)
         areas               = np.zeros((nlabs), dtype = np.float64)
         a_images            = np.zeros((nlabs), dtype = np.float64)
@@ -541,20 +567,47 @@ class Data():
         ellipticities       = np.zeros((nlabs), dtype = np.float64)
         semi_major_angles   = np.zeros((nlabs), dtype = np.float64)
         flux                = np.zeros((nlabs), dtype = np.float64)
-        parent_id           = np.zeros((nlabs), dtype = np.int64)
+        parent_id           = np.zeros((nlabs), dtype = np.int32)
         x_limits            = np.zeros((nlabs, 2), dtype = np.int32)
         y_limits            = np.zeros((nlabs, 2), dtype = np.int32)
 
-        # Use ThreadPoolExecutor to parallelize the computation
+        # TODO: implement this with pure C, leave then a flag
+        print("Computing cov matrices")
+        start_sub = time.monotonic()
+        #_compute_coms_and_covs(self.img, segmentation_map, self.mask, coms, 
+        #                       areas, covariance_matrices, parent_id, flux, x_limits, y_limits)
+        #
+        
+        self.__compute_covs(self.data, segmentation_map, self.mask, nrows, ncols, nlabs, coms, covariance_matrices,
+                            flux, areas, parent_id, x_limits, y_limits)
 
-        _compute_coms_and_covs(self.img, segmentation_map, self.mask, label_idx, coms, 
-                               areas, covariance_matrices, parent_id, flux, x_limits, y_limits)
-        _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images, a_images, semi_major_angles)
+        stop_sub = time.monotonic()
+        print(f"    Time: {stop_sub - start_sub: .2f}")
+
+        print("Computing cov features")
+        start_sub = time.monotonic()
+
+        eigenvals = np.zeros((nlabs,2), dtype = np.float64)
+        eigenvecs = np.zeros((nlabs,4), dtype = np.float64)
+        self.__compute_eigensystems(covariance_matrices, eigenvals, eigenvecs, nlabs)
+
+        # Asterism like ellipticity
+        sig_x         = np.sqrt(eigenvals[:, 0])
+        sig_y         = np.sqrt(eigenvals[:, 1])
+        a_images      = np.sqrt(sig_x * sig_x + sig_y * sig_y)
+        b_images      = sig_y / sig_x * a_images
+        ellipticities = (a_images - b_images) / a_images
+        semi_major_angles = np.rad2deg(np.arctan2(eigenvecs[:, 1], eigenvecs[:, 0]))
+
+        # Asterism like PA
+
+        stop_sub = time.monotonic()
+        print(f"    Time: {stop_sub - start_sub: .2f}")
 
         f = np.where(areas > min_area)
 
         self.sources_properties = {}
-        self.sources_properties["centers_of_mass"]   = coms[f].T
+        self.sources_properties["centers_of_mass"]   = coms[f]
         self.sources_properties["areas"]             = areas[f]
         self.sources_properties["ellipticities"]     = ellipticities[f]
         self.sources_properties["major_axes"]        = b_images[f]
