@@ -2,14 +2,15 @@ import ctypes as ct
 import numpy as np  
 import os
 import time
-from scipy.ndimage import center_of_mass
-from concurrent.futures import ThreadPoolExecutor
+from scipy.ndimage import center_of_mass # non serve più
+from concurrent.futures import ThreadPoolExecutor # non serve più
 import numba
 from astropy.io import fits
+from astropy.wcs import WCS
 
 
 ctFloatType = ct.c_double
-ctIdxType = ct.c_uint64
+ctIdxType   = ct.c_uint64
 
 class HeapNode(ct.Structure):
     _fields_ = [
@@ -80,8 +81,6 @@ class Clusters(ct.Structure):
         ("__borders_data", ct.POINTER(Border_t)),
         ("n", ctIdxType)
     ]
-
-
 
 @numba.njit
 def _compute_coms_and_covs(image: np.array,
@@ -169,9 +168,9 @@ def _compute_cov_properties(covariance_matrices, areas, ellipticities, b_images,
             # Asterism like PA
             semi_major_angle = np.rad2deg(np.arctan2(eigenvectors[0][1], eigenvectors[0][0]))
     
-            a_images[i] = a_image
-            b_images[i] = b_image
-            ellipticities[i] = ellipticity
+            a_images[i]          = a_image
+            b_images[i]          = b_image
+            ellipticities[i]     = ellipticity
             semi_major_angles[i] = semi_major_angle
 
 
@@ -298,6 +297,7 @@ class Data():
                                         np.ctypeslib.ndpointer(ct.c_double),
                                         np.ctypeslib.ndpointer(ct.c_double),
                                         np.ctypeslib.ndpointer(ct.c_double),
+                                        np.ctypeslib.ndpointer(ct.c_int32),
                                         np.ctypeslib.ndpointer(ct.c_double),
                                         np.ctypeslib.ndpointer(ct.c_int32),
                                         np.ctypeslib.ndpointer(ct.c_int32),
@@ -329,8 +329,8 @@ class Data():
             raise TypeError("Please provide a 2d numpy array")
 
 
-        self.__datapoints     = None
-        self.__clusters       = None
+        self.__datapoints   = None
+        self.__clusters     = None
         self.n              = self.data.shape[0]
         self.dims           = self.data.shape[1]
         self.k              = None
@@ -489,7 +489,7 @@ class Data():
             fits.Column(name = 'POSITION_ANGLE', format = 'D'),
             fits.Column(name = 'SEMI_MAJOR_ANGLE', format = 'D'),
             fits.Column(name = 'FLUX_TOT', format = 'D'),
-            fits.Column(name = 'ISOAREA', format = 'D'),
+            fits.Column(name = 'ISOAREA', format = 'J'),
             fits.Column(name = 'SKIPPED', format = 'J'),]
         if self.sources_properties is None:
 
@@ -503,12 +503,12 @@ class Data():
          
         if nsources > 1:
             for i in range(nsources):
-                rec_array[i]['SOURCE_ID']        = i
-                rec_array[i]['PARENT_ID']        = self.sources_properties['parent_id'][i] 
-                rec_array[i]['X_CENTER']         = self.sources_properties['centers_of_mass'][i][0]
-                rec_array[i]['Y_CENTER']         = self.sources_properties['centers_of_mass'][i][1]
-                rec_array[i]['XWIN_WORLD']       = -1
-                rec_array[i]['YWIN_WORLD']       = -1
+                rec_array[i]['SOURCE_ID']        = i + 1
+                rec_array[i]['PARENT_ID']        = self.sources_properties["parent_id"][i] 
+                rec_array[i]['X_CENTER']         = self.sources_properties["centers_of_mass"][i][0]
+                rec_array[i]['Y_CENTER']         = self.sources_properties["centers_of_mass"][i][1]
+                rec_array[i]['XWIN_WORLD']       = self.sources_properties["world_coord"][i][0]
+                rec_array[i]['YWIN_WORLD']       = self.sources_properties["world_coord"][i][1]
                 rec_array[i]['X_MIN']            = self.sources_properties["x_limits"][i][0]
                 rec_array[i]['X_MAX']            = self.sources_properties["x_limits"][i][1]
                 rec_array[i]['Y_MIN']            = self.sources_properties["y_limits"][i][0]
@@ -516,20 +516,20 @@ class Data():
                 rec_array[i]['ALPHA']            = self.sources_properties["minor_axes"][i]
                 rec_array[i]['BETA']             = self.sources_properties["major_axes"][i]
                 rec_array[i]['ELLIPTICITY']      = self.sources_properties["ellipticities"][i]
-                rec_array[i]['R_MAX']            = -1
-                rec_array[i]['POSITION_ANGLE']   = -1
+                rec_array[i]['R_MAX']            = self.sources_properties["r_max"][i]
+                rec_array[i]['POSITION_ANGLE']   = self.sources_properties["position_angle"][i]
                 rec_array[i]['SEMI_MAJOR_ANGLE'] = self.sources_properties["semi_major_angles"][i]
                 rec_array[i]['FLUX_TOT']         = self.sources_properties["flux"][i]
                 rec_array[i]['ISOAREA']          = self.sources_properties["areas"][i]
-                rec_array[i]['SKIPPED']          = -1
+                rec_array[i]['SKIPPED']          = 0
         else:
             # handle the case in which we have only one source
-            rec_array['SOURCE_ID']        = 0
-            rec_array['PARENT_ID']        = self.sources_properties['parent_id'] 
-            rec_array['X_CENTER']         = self.sources_properties['centers_of_mass'][0]
-            rec_array['Y_CENTER']         = self.sources_properties['centers_of_mass'][1]
-            rec_array['XWIN_WORLD']       = -1
-            rec_array['YWIN_WORLD']       = -1
+            rec_array['SOURCE_ID']        = 1
+            rec_array['PARENT_ID']        = self.sources_properties["parent_id"] 
+            rec_array['X_CENTER']         = self.sources_properties["centers_of_mass"][0]
+            rec_array['Y_CENTER']         = self.sources_properties["centers_of_mass"][1]
+            rec_array['XWIN_WORLD']       = self.sources_properties["world_coord"][0]
+            rec_array['YWIN_WORLD']       = self.sources_properties["world_coord"][1]
             rec_array['X_MIN']            = self.sources_properties["x_limits"][0][0]
             rec_array['X_MAX']            = self.sources_properties["x_limits"][0][1]
             rec_array['Y_MIN']            = self.sources_properties["y_limits"][0][0]
@@ -537,19 +537,21 @@ class Data():
             rec_array['ALPHA']            = self.sources_properties["minor_axes"]
             rec_array['BETA']             = self.sources_properties["major_axes"]
             rec_array['ELLIPTICITY']      = self.sources_properties["ellipticities"]
-            rec_array['R_MAX']            = -1
-            rec_array['POSITION_ANGLE']   = -1
+            rec_array['R_MAX']            = self.sources_properties["r_max"]
+            rec_array['POSITION_ANGLE']   = self.sources_properties["position_angle"]
             rec_array['SEMI_MAJOR_ANGLE'] = self.sources_properties["semi_major_angles"]
             rec_array['FLUX_TOT']         = self.sources_properties["flux"]
             rec_array['ISOAREA']          = self.sources_properties["areas"]
-            rec_array['SKIPPED']          = -1
+            rec_array['SKIPPED']          = 0
 
         hdu.data = rec_array
         hdu.writeto(fname, overwrite=True)
 
            
+    def computeSourcesProperties(self, min_area = 10, header=None):
 
-    def computeSourcesProperties(self, min_area = 10):
+        wcs = WCS(header) if header is not None else None
+
         start = time.time()
         print("Computing sources properties")
         self.getClusterAssignment()
@@ -559,12 +561,15 @@ class Data():
         nrows, ncols = self.data.shape
         nlabs = self.__clusters.centers.count
 
-        coms = np.zeros((nlabs,2), dtype = np.float64)
+        coms                = np.zeros((nlabs,2), dtype = np.float64)
+        ra_dec              = np.zeros((nlabs, 2), dtype=np.float64)
         covariance_matrices = np.zeros((nlabs,2,2), dtype = np.float64)
-        areas               = np.zeros((nlabs), dtype = np.float64)
+        areas               = np.zeros((nlabs), dtype = np.int32)
         a_images            = np.zeros((nlabs), dtype = np.float64)
         b_images            = np.zeros((nlabs), dtype = np.float64)
         ellipticities       = np.zeros((nlabs), dtype = np.float64)
+        position_angle      = np.zeros((nlabs), dtype = np.float64)
+        r_max               = np.zeros((nlabs), dtype = np.float64)
         semi_major_angles   = np.zeros((nlabs), dtype = np.float64)
         flux                = np.zeros((nlabs), dtype = np.float64)
         parent_id           = np.zeros((nlabs), dtype = np.int32)
@@ -579,7 +584,7 @@ class Data():
         #
         
         self.__compute_covs(self.data, segmentation_map, self.mask, nrows, ncols, nlabs, coms, covariance_matrices,
-                            flux, areas, parent_id, x_limits, y_limits)
+                            flux, areas, r_max, parent_id, x_limits, y_limits)
 
         stop_sub = time.monotonic()
         print(f"    Time: {stop_sub - start_sub: .2f}")
@@ -592,14 +597,24 @@ class Data():
         self.__compute_eigensystems(covariance_matrices, eigenvals, eigenvecs, nlabs)
 
         # Asterism like ellipticity
-        sig_x         = np.sqrt(eigenvals[:, 0])
-        sig_y         = np.sqrt(eigenvals[:, 1])
-        a_images      = np.sqrt(sig_x * sig_x + sig_y * sig_y)
-        b_images      = sig_y / sig_x * a_images
-        ellipticities = (a_images - b_images) / a_images
+        sig_x             = np.sqrt(eigenvals[:, 0])
+        sig_y             = np.sqrt(eigenvals[:, 1])
+        # a_images      = np.sqrt(sig_x * sig_x + sig_y * sig_y)
+        a_images          = sig_x
+        # b_images      = sig_y / sig_x * a_images
+        b_images          = sig_y
+        ellipticities     = (a_images - b_images) / a_images
         semi_major_angles = np.rad2deg(np.arctan2(eigenvecs[:, 1], eigenvecs[:, 0]))
+        position_angle    = ((semi_major_angles + 90.) % 180.) - 90. 
+        ra_dec            = wcs.all_pix2world(coms, 0)
 
-        # Asterism like PA
+        # Change position angle reference
+        # if semi_major_angles > 90. and semi_major_angles < 180:
+        #     position_angle  = semi_major_angles - 180.
+        # elif semi_major_angles > -180. and semi_major_angles < -90:
+        #     position_angle  = semi_major_angles + 180.
+        # else:
+        #     position_angle  = semi_major_angles
 
         stop_sub = time.monotonic()
         print(f"    Time: {stop_sub - start_sub: .2f}")
@@ -608,10 +623,13 @@ class Data():
 
         self.sources_properties = {}
         self.sources_properties["centers_of_mass"]   = coms[f]
+        self.sources_properties["world_coord"]       = ra_dec[f]
         self.sources_properties["areas"]             = areas[f]
         self.sources_properties["ellipticities"]     = ellipticities[f]
         self.sources_properties["major_axes"]        = b_images[f]
         self.sources_properties["minor_axes"]        = a_images[f]
+        self.sources_properties["position_angle"]    = position_angle[f]
+        self.sources_properties["r_max"]             = r_max[f]
         self.sources_properties["semi_major_angles"] = semi_major_angles[f]
         self.sources_properties["x_limits"]          = x_limits[f]
         self.sources_properties["y_limits"]          = y_limits[f]
@@ -622,9 +640,6 @@ class Data():
         print(f"\tElapsed time: {stop - start:.2f}s")
 
         return self.sources_properties
-
-
-
 
     def writePNG(self,fname, scale = 0.5):
         max_allowed_dim = 4000

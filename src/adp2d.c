@@ -470,7 +470,7 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
             if(box_is_valid)
             {
                 // printf("Processing box row [%d %d] col [%d %d]\n",  box.lb_row, box.ub_row, 
-                //                                                    box.lb_col, box.ub_col);
+                //                                                     box.lb_col, box.ub_col);
                 int ncols_box = (box.ub_col - box.lb_col) + 1;
                 int nrows_box = (box.ub_row - box.lb_row) + 1;
                 int n_pixels_in_box =  nrows_box * ncols_box;
@@ -990,8 +990,8 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
     //idx_t max_k = dpInfo[0].ngbh.N;
 
 
-    for(int i = 0; i < (int)nrows; ++i)
-    for(int j = 0; j < (int)ncols; ++j)
+    for(int i = 0; i < (int)nrows; i++)
+    for(int j = 0; j < (int)ncols; j++)
     {
             idx_t pp = NOBORDER;
             /*loop over n neighbors*/
@@ -1006,8 +1006,8 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
 				int iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
 				
 				long int minNgbhDist = nrows*nrows*ncols*ncols;
-				for(int ii = iimin; ii < iimax; ++ii)
-				for(int jj = jjmin; jj < jjmax; ++jj)
+				for(int ii = iimin; ii < iimax; ii++)
+				for(int jj = jjmin; jj < jjmax; jj++)
                 {
                     /*index of the kth ngbh of n*/
                     idx_t jidx = ii*ncols + jj;
@@ -1057,7 +1057,7 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
 					pp = NOBORDER;
 				}
             }
-                            /*if it is the maximum one add it to the cluster*/
+            /*if it is the maximum one add it to the cluster*/
             if(pp != NOBORDER)
             {
 				int ppc = dpInfo[pp].cluster_idx;
@@ -2175,7 +2175,8 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
                   FLOAT_TYPE* centers_of_mass, 
                   FLOAT_TYPE* cov_matrices, 
                   FLOAT_TYPE* flux,
-                  FLOAT_TYPE* areas,
+                  int* areas,
+                  FLOAT_TYPE* rmax,
                   int* parent_id,
                   int* x_limits,
                   int* y_limits)
@@ -2194,7 +2195,7 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
         cov_matrices[4*i + 2] = 0.;
         cov_matrices[4*i + 3] = 0.;
 
-        parent_id[i] = -1;
+        parent_id[i]    = -1;
 
         x_limits[LOWER_BOUND(i)] = ncols; 
         x_limits[UPPER_BOUND(i)] = 0;
@@ -2202,19 +2203,22 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
         y_limits[LOWER_BOUND(i)] = nrows; 
         y_limits[UPPER_BOUND(i)] = 0;
 
-        flux[i] = 0.;
-        areas[i] = 0;
+        flux[i]    = 0.;
+        areas[i]   = 0.;
+        rmax[i]    = 0.;
     }
 
     #pragma omp parallel
     {
         FLOAT_TYPE* pvt_centers_of_mass = (FLOAT_TYPE*)calloc(2 * nclusters, sizeof(FLOAT_TYPE));
-        FLOAT_TYPE* pvt_cov_matrices = (FLOAT_TYPE*)calloc(4 * nclusters, sizeof(FLOAT_TYPE));
-        FLOAT_TYPE* pvt_flux = (FLOAT_TYPE*)calloc(nclusters, sizeof(FLOAT_TYPE));
-
-        int* pvt_x_limits = (int*)calloc(2 * nclusters, sizeof(int));
-        int* pvt_y_limits = (int*)calloc(2 * nclusters, sizeof(int));
-        FLOAT_TYPE* pvt_areas    = (FLOAT_TYPE*)calloc(nclusters, sizeof(FLOAT_TYPE));
+        FLOAT_TYPE* pvt_cov_matrices    = (FLOAT_TYPE*)calloc(4 * nclusters, sizeof(FLOAT_TYPE));
+        FLOAT_TYPE* pvt_flux            = (FLOAT_TYPE*)calloc(nclusters, sizeof(FLOAT_TYPE));
+        FLOAT_TYPE* pvt_r_max           = (FLOAT_TYPE*)calloc(nclusters, sizeof(FLOAT_TYPE));
+        
+        int* pvt_areas                  = (int*)calloc(nclusters, sizeof(int));
+        int* pvt_x_limits               = (int*)calloc(2 * nclusters, sizeof(int));
+        int* pvt_y_limits               = (int*)calloc(2 * nclusters, sizeof(int));
+        int* pvt_parent_id              = (int*)malloc(nclusters * sizeof(int));
 
         for(int i = 0; i < nclusters; ++i)
         {
@@ -2222,6 +2226,7 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
             pvt_x_limits[UPPER_BOUND(i)] = 0;
             pvt_y_limits[LOWER_BOUND(i)] = nrows; 
             pvt_y_limits[UPPER_BOUND(i)] = 0;
+            pvt_parent_id[i] = -1;
         }
 
         #pragma omp for
@@ -2230,17 +2235,33 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
             {
                 int lab = segmentation_map[yy*ncols + xx]; 
                 if (lab != -1)
-                {
-                    pvt_centers_of_mass[2*lab] += (float)xx;
-                    pvt_centers_of_mass[2*lab + 1] += (float)yy;
+                {   
+                    FLOAT_TYPE pix_flux = image[yy*ncols + xx];
+                    if (pix_flux < 0) pix_flux = fabs(pix_flux);
+                    {
+                        pvt_centers_of_mass[2*lab]     += (FLOAT_TYPE)xx * pix_flux;
+                        pvt_centers_of_mass[2*lab + 1] += (FLOAT_TYPE)yy * pix_flux;
+                        pvt_flux[lab]                  += pix_flux;
+                    }
+                    
                     pvt_areas[lab] += 1;
-                    if(parent_id[lab] == -1) parent_id[lab] = mask[yy*ncols + xx];
 
-                    pvt_x_limits[LOWER_BOUND(lab)] = MIN(yy, pvt_x_limits[LOWER_BOUND(lab)]);
-                    pvt_x_limits[UPPER_BOUND(lab)] = MAX(yy, pvt_x_limits[UPPER_BOUND(lab)]);
+                    // if(parent_id[lab] == -1) parent_id[lab] = mask[yy*ncols + xx];
+                    
+                    int det_id = mask[yy*ncols + xx];
+                    if (det_id != -1 && pvt_parent_id[lab] == -1) {
+                        pvt_parent_id[lab] = det_id;
+                    }
 
-                    pvt_y_limits[LOWER_BOUND(lab)] = MIN(xx, pvt_y_limits[LOWER_BOUND(lab)]);
-                    pvt_y_limits[UPPER_BOUND(lab)] = MAX(xx, pvt_y_limits[UPPER_BOUND(lab)]);
+                    // pvt_x_limits[LOWER_BOUND(lab)] = MIN(yy, pvt_x_limits[LOWER_BOUND(lab)]);
+                    // pvt_x_limits[UPPER_BOUND(lab)] = MAX(yy, pvt_x_limits[UPPER_BOUND(lab)]);
+                    pvt_x_limits[LOWER_BOUND(lab)] = MIN(xx, pvt_x_limits[LOWER_BOUND(lab)]);
+                    pvt_x_limits[UPPER_BOUND(lab)] = MAX(xx, pvt_x_limits[UPPER_BOUND(lab)]);
+
+                    // pvt_y_limits[LOWER_BOUND(lab)] = MIN(xx, pvt_y_limits[LOWER_BOUND(lab)]);
+                    // pvt_y_limits[UPPER_BOUND(lab)] = MAX(xx, pvt_y_limits[UPPER_BOUND(lab)]);
+                    pvt_y_limits[LOWER_BOUND(lab)] = MIN(yy, pvt_y_limits[LOWER_BOUND(lab)]);
+                    pvt_y_limits[UPPER_BOUND(lab)] = MAX(yy, pvt_y_limits[UPPER_BOUND(lab)]);
                 }
             }
 
@@ -2252,24 +2273,61 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
                 centers_of_mass[2*i]     += pvt_centers_of_mass[2*i];
                 centers_of_mass[2*i + 1] += pvt_centers_of_mass[2*i + 1];
 
-                areas[i] += pvt_areas[i];
+                areas[i]   += pvt_areas[i];
+                flux[i]    += pvt_flux[i];
 
                 x_limits[LOWER_BOUND(i)] = MIN(x_limits[LOWER_BOUND(i)], pvt_x_limits[LOWER_BOUND(i)]);
                 x_limits[UPPER_BOUND(i)] = MAX(x_limits[UPPER_BOUND(i)], pvt_x_limits[UPPER_BOUND(i)]);
 
                 y_limits[LOWER_BOUND(i)] = MIN(y_limits[LOWER_BOUND(i)], pvt_y_limits[LOWER_BOUND(i)]);
                 y_limits[UPPER_BOUND(i)] = MAX(y_limits[UPPER_BOUND(i)], pvt_y_limits[UPPER_BOUND(i)]);
+
+                if (parent_id[i] == -1 && pvt_parent_id[i] != -1) {
+                    parent_id[i] = pvt_parent_id[i];
+                }
             }
         }
 
         #pragma omp barrier
 
+        #pragma omp single
+        {
+            int max_det_id = -1;
+            for (int lab = 0; lab < nclusters; ++lab) {
+                if (parent_id[lab] > max_det_id) max_det_id = parent_id[lab];
+            }
+
+            int* det_child_count = (int*)calloc(max_det_id + 1, sizeof(int));
+
+            for (int lab = 0; lab < nclusters; ++lab) {
+                int det_id = parent_id[lab];
+                if (det_id != -1) {
+                    det_child_count[det_id] += 1;
+                }
+            }
+
+            for (int lab = 0; lab < nclusters; ++lab) {
+                int det_id = parent_id[lab];
+                if (det_id == -1) continue;
+
+                if (det_child_count[det_id] <= 1)
+                    parent_id[lab] = -1;      // not deblended
+                else
+                    parent_id[lab] = det_id;  // deblended child
+            }
+
+            free(det_child_count);
+        }
+
+        // #pragma omp barrier
 
         #pragma omp for
         for(int i = 0; i < nclusters; ++i)
         {
-            centers_of_mass[2*i]     = centers_of_mass[2*i]    /areas[i];
-            centers_of_mass[2*i + 1] = centers_of_mass[2*i + 1]/areas[i];
+            // centers_of_mass[2*i]     = centers_of_mass[2*i]    /areas[i];
+            // centers_of_mass[2*i + 1] = centers_of_mass[2*i + 1]/areas[i];
+            centers_of_mass[2*i]     = centers_of_mass[2*i]    /flux[i];
+            centers_of_mass[2*i + 1] = centers_of_mass[2*i + 1]/flux[i];
         }
 
 
@@ -2280,15 +2338,24 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
                 int lab = segmentation_map[yy*ncols + xx]; 
                 if(lab != -1)
                 {
-                    float x_n = (float)xx - (float)centers_of_mass[2*lab];
-                    float y_n = (float)yy - (float)centers_of_mass[2*lab + 1];
-                    pvt_flux[lab] += image[yy*ncols + xx];
+                    float x_n = (FLOAT_TYPE)xx - centers_of_mass[2*lab];
+                    float y_n = (FLOAT_TYPE)yy - centers_of_mass[2*lab + 1];
 
-                    pvt_cov_matrices[4*lab    ] += x_n * x_n;
-                    pvt_cov_matrices[4*lab + 1] += x_n * y_n;
-                    pvt_cov_matrices[4*lab + 2] += x_n * y_n;
-                    pvt_cov_matrices[4*lab + 3] += y_n * y_n;
-
+                    FLOAT_TYPE pix_flux = image[yy*ncols + xx];
+                    FLOAT_TYPE r        = sqrt(x_n * x_n + y_n * y_n);
+                    if (r > pvt_r_max[lab]) pvt_r_max[lab] = r;
+                    
+                    // pvt_cov_matrices[4*lab    ] += x_n * x_n;
+                    // pvt_cov_matrices[4*lab + 1] += x_n * y_n;
+                    // pvt_cov_matrices[4*lab + 2] += x_n * y_n;
+                    // pvt_cov_matrices[4*lab + 3] += y_n * y_n;
+                    if (pix_flux < 0) pix_flux = fabs(pix_flux);
+                    {
+                        pvt_cov_matrices[4*lab    ] += x_n * x_n * pix_flux;
+                        pvt_cov_matrices[4*lab + 1] += x_n * y_n * pix_flux;
+                        pvt_cov_matrices[4*lab + 2] += x_n * y_n * pix_flux;
+                        pvt_cov_matrices[4*lab + 3] += y_n * y_n * pix_flux;
+                    }
                 }
             }
 
@@ -2307,7 +2374,7 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
                     y_limits[2*lab    ] = MIN(pvt_y_limits[2*lab], y_limits[2*lab]);
                     y_limits[2*lab + 1] = MAX(pvt_y_limits[2*lab + 1], y_limits[2*lab + 1]);
                     
-                    flux[lab] += pvt_flux[lab];
+                    rmax[lab]           = MAX(rmax[lab], pvt_r_max[lab]);
             }
         }
 
@@ -2316,10 +2383,15 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
         #pragma omp for
         for(int lab = 0; lab < nclusters; ++lab)
         {
-                cov_matrices[4*lab]     = cov_matrices[4*lab]    /(areas[lab]-1);
-                cov_matrices[4*lab + 1] = cov_matrices[4*lab + 1]/(areas[lab]-1);
-                cov_matrices[4*lab + 2] = cov_matrices[4*lab + 2]/(areas[lab]-1);
-                cov_matrices[4*lab + 3] = cov_matrices[4*lab + 3]/(areas[lab]-1);
+                // cov_matrices[4*lab]     = cov_matrices[4*lab]    /(areas[lab]-1);
+                // cov_matrices[4*lab + 1] = cov_matrices[4*lab + 1]/(areas[lab]-1);
+                // cov_matrices[4*lab + 2] = cov_matrices[4*lab + 2]/(areas[lab]-1);
+                // cov_matrices[4*lab + 3] = cov_matrices[4*lab + 3]/(areas[lab]-1);
+
+                cov_matrices[4*lab]     = cov_matrices[4*lab]    /flux[lab];
+                cov_matrices[4*lab + 1] = cov_matrices[4*lab + 1]/flux[lab];
+                cov_matrices[4*lab + 2] = cov_matrices[4*lab + 2]/flux[lab];
+                cov_matrices[4*lab + 3] = cov_matrices[4*lab + 3]/flux[lab];
         }
  
         free(pvt_centers_of_mass);
@@ -2328,7 +2400,8 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
         free(pvt_x_limits);
         free(pvt_y_limits);
         free(pvt_areas);
-
+        free(pvt_parent_id);
+        free(pvt_r_max);
     }
 
     #undef LOWER_BOUND
@@ -2398,6 +2471,19 @@ void compute_eigensystem_2x2(const double *A, double *lambda, double *V) {
         V[3] = lambda2 - a;
     }
 
+    // normalize eigenvector 1
+    double n1 = sqrt(V[0]*V[0] + V[1]*V[1]);
+    if (n1 > EPS) {
+        V[0] /= n1;
+        V[1] /= n1;
+    }
+
+    // normalize eigenvector 2
+    double n2 = sqrt(V[2]*V[2] + V[3]*V[3]);
+    if (n2 > EPS) {
+        V[2] /= n2;
+        V[3] /= n2;
+    }
 }
 
 void compute_eigensystems(FLOAT_TYPE* cov_matrices, FLOAT_TYPE* lambdas, FLOAT_TYPE* vs, int nclusters)
@@ -2408,10 +2494,6 @@ void compute_eigensystems(FLOAT_TYPE* cov_matrices, FLOAT_TYPE* lambdas, FLOAT_T
         compute_eigensystem_2x2(cov_matrices + lab*4, lambdas + 2*lab, vs + 4*lab);
     }
 }
-
-
-
-
 
 void export_cluster_assignment(Datapoint_info* points, int* labels, idx_t n)
 {
