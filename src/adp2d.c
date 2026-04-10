@@ -1,17 +1,22 @@
 //include "../include/read_fof_snapshot.h"
-#include "../include/adp2d.h"
 #include <math.h>
 #include <omp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <float.h>
 
 /*
 #define STB_IMAGE_IMPLEMENTATION
 #include "../include/stb_image.h"
 */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "../include/adp2d.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "../include/stb_image_write.h"
 
@@ -28,7 +33,7 @@
 unsigned int data_dims;
 idx_t Npart;
 const border_t border_null = {.density = -1.0, .error = 0, .idx = NOBORDER};
-const SparseBorder_t SparseBorder_null = {.density = -1.0, .error = 0, .idx = NOBORDER, .i = NOBORDER, .j = NOBORDER};
+const SparseBorder_t SparseBorder_null = { .i = NOBORDER, .j = NOBORDER, .idx = NOBORDER, .density = -1.0, .error = 0};
 
 /*****************************
  * Clusters object functions *
@@ -91,7 +96,7 @@ void AdjList_Insert(AdjList_t* l, SparseBorder_t b)
 	else
 	{
 		l -> size += PREALLOC_BORDERS; 
-		l -> data = realloc( l -> data, sizeof(SparseBorder_t) * ( l -> size));
+		l -> data = (SparseBorder_t*)realloc( l -> data, sizeof(SparseBorder_t) * ( l -> size));
 		l -> data[l -> count] = b;
 		l -> count++;
 	}
@@ -189,7 +194,7 @@ void DynamicArray_pushBack(lu_dynamicArray * a, idx_t p)
     }
     else{
         a -> size += ARRAY_INCREMENT;
-        a -> data = realloc(a -> data, a -> size * sizeof(idx_t));
+        a -> data = (idx_t*)realloc(a -> data, a -> size * sizeof(idx_t));
         a -> data[a -> count] =  p;
         a -> count += 1;
     }
@@ -201,7 +206,7 @@ void DynamicArray_Reset(lu_dynamicArray * a){
 
 void DynamicArray_Reserve(lu_dynamicArray * a, idx_t n)
 {
-    a -> data = realloc(a -> data, n*sizeof(idx_t));
+    a -> data = (idx_t*)realloc(a -> data, n*sizeof(idx_t));
     a -> size = n;
 }
 
@@ -993,97 +998,97 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
     for(int i = 0; i < (int)nrows; ++i)
     for(int j = 0; j < (int)ncols; ++j)
     {
-            idx_t pp = NOBORDER;
-            /*loop over n neighbors*/
-            int c = dpInfo[i*ncols + j].cluster_idx;
-            if((!(dpInfo[i*ncols + j].is_center)) && mask[i*ncols + j])
+        idx_t pp = NOBORDER;
+        /*loop over n neighbors*/
+        int c = dpInfo[i*ncols + j].cluster_idx;
+        if((!(dpInfo[i*ncols + j].is_center)) && mask[i*ncols + j])
+        {
+            int r = (int)dpInfo[i*ncols + j].kstar;				
+            int jjmin = j - r > 0 				? j - r : 0;  
+            int jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
+
+            int iimin = i - r > 0 	 			? i - r : 0;  
+            int iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
+            
+            long int minNgbhDist = nrows*nrows*ncols*ncols;
+            for(int ii = iimin; ii < iimax; ++ii)
+            for(int jj = jjmin; jj < jjmax; ++jj)
             {
-				int r = (int)dpInfo[i*ncols + j].kstar;				
-				int jjmin = j - r > 0 				? j - r : 0;  
-				int jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
-
-				int iimin = i - r > 0 	 			? i - r : 0;  
-				int iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
-				
-				long int minNgbhDist = nrows*nrows*ncols*ncols;
-				for(int ii = iimin; ii < iimax; ++ii)
-				for(int jj = jjmin; jj < jjmax; ++jj)
+                /*index of the kth ngbh of n*/
+                idx_t jidx = ii*ncols + jj;
+                long int currentNgbhDist = (ii-i)*(ii-i) + (jj - j)*(jj - j);
+                /*Loop over kn neigbhours to find if n is the nearest*/
+                /*if cluster of the particle in nbhg is c then check is neighborhood*/                                                
+                if(dpInfo[jidx].cluster_idx != -1 
+                        && dpInfo[jidx].cluster_idx != c 
+                        && !dpInfo[jidx].is_center  
+                        && mask[jidx] 
+                        && currentNgbhDist < minNgbhDist)
                 {
-                    /*index of the kth ngbh of n*/
-                    idx_t jidx = ii*ncols + jj;
-					long int currentNgbhDist = (ii-i)*(ii-i) + (jj - j)*(jj - j);
-                    /*Loop over kn neigbhours to find if n is the nearest*/
-                    /*if cluster of the particle in nbhg is c then check is neighborhood*/                                                
-                    if(dpInfo[jidx].cluster_idx != -1 
-							&& dpInfo[jidx].cluster_idx != c 
-							&& !dpInfo[jidx].is_center  
-							&& mask[jidx] 
-							&& currentNgbhDist < minNgbhDist)
-                    {
-						minNgbhDist = currentNgbhDist;
-                        pp = jidx;
-                    }
+                    minNgbhDist = currentNgbhDist;
+                    pp = jidx;
+                }
 
+            }
+        }
+
+        if(pp != NOBORDER)
+        {
+            int r = (int)dpInfo[pp].kstar;				
+            int ngbh_i = (int)pp / (int)ncols; 
+            int ngbh_j = (int)pp % (int)ncols; 
+            int jjmin = ngbh_j - r > 0 				? ngbh_j - r : 0;  
+            int jjmax = ngbh_j + r + 1 < (int)ncols ? ngbh_j + r + 1 : (int)ncols;  
+
+            int iimin = ngbh_i - r > 0 	 			? ngbh_i - r : 0;  
+            int iimax = ngbh_i + r + 1 < (int)nrows ? ngbh_i + r + 1 : (int)nrows;  
+            
+            long int minNgbhDist = nrows*nrows*ncols*ncols;
+            idx_t nearestBelongingToC = NOBORDER;
+            for(int ii = iimin; ii < iimax; ++ii)
+            for(int jj = jjmin; jj < jjmax; ++jj)
+            {
+                idx_t pp_ngbh_idx = ii*ncols + jj;
+                long int currentNgbhDist = (ii-i)*(ii-i) + (jj - j)*(jj - j);
+                //find if the nearest is the starting point
+                if(dpInfo[pp_ngbh_idx].cluster_idx == c && currentNgbhDist < minNgbhDist )
+                {
+                    minNgbhDist = currentNgbhDist;
+                    nearestBelongingToC = pp_ngbh_idx;
                 }
             }
-
-            if(pp != NOBORDER)
+            if(nearestBelongingToC != i*ncols + j)
             {
-				int r = (int)dpInfo[pp].kstar;				
-				int ngbh_i = (int)pp / (int)ncols; 
-				int ngbh_j = (int)pp % (int)ncols; 
-				int jjmin = ngbh_j - r > 0 				? ngbh_j - r : 0;  
-				int jjmax = ngbh_j + r + 1 < (int)ncols ? ngbh_j + r + 1 : (int)ncols;  
-
-				int iimin = ngbh_i - r > 0 	 			? ngbh_i - r : 0;  
-				int iimax = ngbh_i + r + 1 < (int)nrows ? ngbh_i + r + 1 : (int)nrows;  
-				
-				long int minNgbhDist = nrows*nrows*ncols*ncols;
-				idx_t nearestBelongingToC = NOBORDER;
-				for(int ii = iimin; ii < iimax; ++ii)
-				for(int jj = jjmin; jj < jjmax; ++jj)
-                {
-					idx_t pp_ngbh_idx = ii*ncols + jj;
-					long int currentNgbhDist = (ii-i)*(ii-i) + (jj - j)*(jj - j);
-					//find if the nearest is the starting point
-                    if(dpInfo[pp_ngbh_idx].cluster_idx == c && currentNgbhDist < minNgbhDist )
-                    {
-						minNgbhDist = currentNgbhDist;
-						nearestBelongingToC = pp_ngbh_idx;
-                    }
-                }
-				if(nearestBelongingToC != i*ncols + j)
-				{
-					pp = NOBORDER;
-				}
+                pp = NOBORDER;
             }
-                            /*if it is the maximum one add it to the cluster*/
-            if(pp != NOBORDER)
+        }
+                        /*if it is the maximum one add it to the cluster*/
+        if(pp != NOBORDER)
+        {
+            int ppc = dpInfo[pp].cluster_idx;
+            if(cluster -> UseSparseBorders)
             {
-				int ppc = dpInfo[pp].cluster_idx;
-				if(cluster -> UseSparseBorders)
-				{
-					//insert one and symmetric one
-					SparseBorder_t b = {.i = c, .j = ppc, .idx = i*ncols + j, .density = dpInfo[i*ncols + j].g, .error = dpInfo[i*ncols + j].log_rho_err}; 
-					SparseBorder_Insert(cluster, b);
-					//get symmetric border
-					SparseBorder_t bsym = {.i = ppc, .j = c, .idx = i*ncols + j, .density = dpInfo[i*ncols + j].g, .error = dpInfo[i*ncols + j].log_rho_err}; 
-					SparseBorder_Insert(cluster, bsym);
+                //insert one and symmetric one
+                SparseBorder_t b = {.i = c, .j = ppc, .idx = i*ncols + j, .density = dpInfo[i*ncols + j].g, .error = dpInfo[i*ncols + j].log_rho_err}; 
+                SparseBorder_Insert(cluster, b);
+                //get symmetric border
+                SparseBorder_t bsym = {.i = ppc, .j = c, .idx = i*ncols + j, .density = dpInfo[i*ncols + j].g, .error = dpInfo[i*ncols + j].log_rho_err}; 
+                SparseBorder_Insert(cluster, bsym);
 
-				}
-				else
-				{
-					if(dpInfo[i*ncols + j].g > borders[c][ppc].density)
-					{
-						borders[c][ppc].density = dpInfo[i*ncols + j].g;
-						borders[ppc][c].density = dpInfo[i*ncols + j].g;
-						borders[c][ppc].idx = i*ncols + j;
-						borders[ppc][c].idx = i*ncols + j;
-					}
-				}
-			}
+            }
+            else
+            {
+                if(dpInfo[i*ncols + j].g > borders[c][ppc].density)
+                {
+                    borders[c][ppc].density = dpInfo[i*ncols + j].g;
+                    borders[ppc][c].density = dpInfo[i*ncols + j].g;
+                    borders[c][ppc].idx = i*ncols + j;
+                    borders[ppc][c].idx = i*ncols + j;
+                }
+            }
+        }
 
-}
+    }
 
 
 	if(cluster -> UseSparseBorders)
@@ -1330,9 +1335,9 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, 
   idx_t nclus                 = cluster -> centers.count;  
   idx_t *  surviving_clusters = (idx_t*)malloc(nclus*sizeof(idx_t));
   for(idx_t i = 0; i < nclus; ++i)
-    { 
+  { 
         surviving_clusters[i] = i; 
-    }
+  }
 
   idx_t   merge_count        = 0;
   idx_t   merging_table_size = 1000;
@@ -1559,7 +1564,7 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, 
 		    #pragma omp for
 		    for(idx_t c = 0; c < final_cluster_count; ++c)
 		    {
-				FLOAT_TYPE max_border_den = -2.;
+				FLOAT_TYPE max_border_den = -FLT_MAX;
 				for(idx_t el = 0; el < cluster -> SparseBorders[c].count; ++el)
 				{
 					SparseBorder_t b = cluster -> SparseBorders[c].data[el];
@@ -2418,3 +2423,6 @@ void export_cluster_assignment(Datapoint_info* points, int* labels, idx_t n)
 	for(idx_t i = 0; i < n; ++i) labels[i] = points[i].cluster_idx;
 }
 
+#ifdef __cplusplus
+}
+#endif

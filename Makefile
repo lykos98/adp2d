@@ -6,7 +6,7 @@ DEBUG=-ggdb
 SRC="src"
 #VERBOSE=-DVERBOSE
 
-CC=gcc
+CC=g++
 
 all: lib 
 
