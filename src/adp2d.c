@@ -1,5 +1,6 @@
 //include "../include/read_fof_snapshot.h"
 #include "../include/adp2d.h"
+#include <float.h>
 #include <math.h>
 #include <omp.h>
 #include <stdint.h>
@@ -219,76 +220,23 @@ void DynamicArray_Init(lu_dynamicArray * a)
 
 
 int cmp(const void * a, const void * b){
-    FLOAT_TYPE aa = *((FLOAT_TYPE*)a);
-    FLOAT_TYPE bb = *((FLOAT_TYPE*)b);
-    return 2*(aa > bb ) - 1; 
+    float_t aa = *((float_t*)a);
+    float_t bb = *((float_t*)b);
+    return (aa > bb ) - (aa < bb); 
 }
 
 
 
-FLOAT_TYPE avg(const FLOAT_TYPE * x, const idx_t n)
+float_t avg(const float_t * x, const idx_t n)
 {
-    FLOAT_TYPE f = 0;
+    float_t f = 0;
     for(idx_t i = 0; i < n; ++i)
     {
         f += x[i];
     }
-    return f/(FLOAT_TYPE)n;
+    return f/(float_t)n;
 }
 
-
-
-FLOAT_TYPE mEst2(FLOAT_TYPE * x, FLOAT_TYPE *y, idx_t n)
-{
-
-    /********************************************
-     * Estimate the m coefficient of a straight *
-     * line passing through the origin          *
-     * params:                                  *
-     * - x: x values of the points              *
-     * - y: y values of the points              *
-     * - n: size of the arrays                  *
-     ********************************************/
-     
-
-    //FLOAT_TYPE x_avg, y_avg;
-    FLOAT_TYPE num = 0;
-    FLOAT_TYPE den = 0;
-    FLOAT_TYPE dd;
-    for(idx_t i = 0; i < n; ++i)
-    {
-        FLOAT_TYPE xx = x[i];
-        FLOAT_TYPE yy = y[i];
-
-        dd = xx;
-        num += dd*yy;
-        den += dd*dd;
-
-    }
-  
-    return num/den;
-}
-FLOAT_TYPE mEst(FLOAT_TYPE * x, FLOAT_TYPE *y, idx_t n)
-{
-    FLOAT_TYPE x_avg, y_avg;
-    x_avg = avg(x,n);
-    y_avg = avg(y,n);
-    FLOAT_TYPE num = 0;
-    FLOAT_TYPE den = 0;
-    FLOAT_TYPE dd;
-    for(idx_t i = 0; i < n - 1; ++i)
-    {
-        FLOAT_TYPE xx = x[i];
-        FLOAT_TYPE yy = y[i];
-
-        dd = (xx - x_avg);
-        num += dd*(yy - y_avg);
-        den += dd*dd;
-
-    }
-  
-    return num/den;
-}
 
 int cmpPP(const void* p1, const void *p2)
 {
@@ -300,27 +248,25 @@ int cmpPP(const void* p1, const void *p2)
     Datapoint_info* pp2 = *(Datapoint_info**)p2;
 	float_t g1 = pp1 -> g;
 	float_t g2 = pp2 -> g;
-  	//return - ( DensA > DensB) + (DensA < DensB);
-    return - (g1 > g2) + (g1 < g2);
-    //return 2*(pp1 -> g < pp2 -> g) - 1;
+    return (g1 < g2) - (g1 > g2);
 }
 
-void computeCorrection(Datapoint_info* dpInfo, int* mask, idx_t n, FLOAT_TYPE Z)
+void computeCorrection(Datapoint_info* dpInfo, int* mask, idx_t n, float_t Z)
 {
     /*****************************************************************************
      * Utility function, find the minimum value of the density of the datapoints *
      * and shift them up in order to further work with values greater than 0     *
      *****************************************************************************/
-    FLOAT_TYPE min_log_rho = 999999.9;
+    float_t min_log_rho = FLT_MAX;
     
 
     #pragma omp parallel
     {
-        FLOAT_TYPE thread_min_log_rho = 9999999.;
+        float_t thread_min_log_rho = FLT_MAX;
         #pragma omp for
         for(idx_t i = 0; i < n; ++i)
         {
-            FLOAT_TYPE tmp = dpInfo[i].log_rho - Z*dpInfo[i].log_rho_err;
+            float_t tmp = dpInfo[i].log_rho - Z*dpInfo[i].log_rho_err;
             if(tmp < thread_min_log_rho && mask[i]){
                 thread_min_log_rho = tmp;
             }
@@ -649,7 +595,7 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         dpInfo_ptrs[i*ncols + j] = dpInfo + i*ncols + j;
         int r = (int)dpInfo[i*ncols + j].kstar;
         //int r = 50; 
-        FLOAT_TYPE gi = dpInfo[i*ncols + j].g;
+        float_t gi = dpInfo[i*ncols + j].g;
         dpInfo[i*ncols + j].is_center = mask[i*ncols + j] ? 1 : 0;
         dpInfo[i*ncols + j].cluster_idx = -1;
         //printf("%lf\n",p -> g);
@@ -665,7 +611,7 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 			for(int jj = jjmin; jj < jjmax; ++jj)
 			{
 				idx_t ngbh_index = (idx_t)ii*ncols + jj; 
-				FLOAT_TYPE gj = dpInfo[ngbh_index].g;
+				float_t gj = dpInfo[ngbh_index].g;
 				if(gj > gi && mask[ngbh_index] && ((int)ngbh_index != (int)(i*ncols + j) )){
 					dpInfo[i*ncols + j].is_center = 0;
 					break;
@@ -755,7 +701,7 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
     {
         idx_t i = allCenters.data[p];
         int e = 0;
-        //FLOAT_TYPE gi = dpInfo[i].g;
+        //float_t gi = dpInfo[i].g;
         idx_t mr = to_remove_mask[i];
         if(mr != MY_SIZE_MAX)
         {
@@ -878,7 +824,7 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
             //
             if(!foundFlag)
             {
-                FLOAT_TYPE gmax = -99999.;               
+                float_t gmax = -99999.;               
                 idx_t gm_index = 0;
 
 				for(int ii = iimin; ii < iimax; ++ii)
@@ -887,7 +833,7 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
                     idx_t ngbh_index = ii*ncols + jj;
                     for(idx_t m = 0; m < removedCenters.count; ++m)
                     {
-                        FLOAT_TYPE gcand = dpInfo[max_rho.data[m]].g;
+                        float_t gcand = dpInfo[max_rho.data[m]].g;
                         if(ngbh_index == removedCenters.data[m] && gcand > gmax)
                         {   
                             //printf("%lu -- %lu\n", ele, m);
@@ -1159,18 +1105,18 @@ void Merge_A_into_B(idx_t* who_amI, idx_t cluster_A, idx_t cluster_B, idx_t n)
 
 int compare_merging_density( const void *A, const void *B)
 {
-  FLOAT_TYPE DensA = ((merge_t*)A)->density;
-  FLOAT_TYPE DensB = ((merge_t*)B)->density;
+  float_t DensA = ((merge_t*)A)->density;
+  float_t DensB = ((merge_t*)B)->density;
 
   return - ( DensA > DensB) + (DensA < DensB);
 }
 
 
 static inline int is_a_merging( 
-                FLOAT_TYPE dens1, FLOAT_TYPE dens1_err,
-                FLOAT_TYPE dens2, FLOAT_TYPE dens2_err,
-                FLOAT_TYPE dens_border, FLOAT_TYPE dens_border_err,
-                FLOAT_TYPE Z)
+                float_t dens1, float_t dens1_err,
+                float_t dens2, float_t dens2_err,
+                float_t dens_border, float_t dens_border_err,
+                float_t Z)
 /*
  * dens1 : the density of the particle that is the center of the first cluster
  * dens2 : the density of the particle that is the center of the second cluster
@@ -1181,30 +1127,30 @@ static inline int is_a_merging(
 {
   /* in the original code it was:
    *
-  FLOAT_TYPE a1 = dpInfo[cluster->centers.data[i]].log_rho_c - border_density[i][j];
-  FLOAT_TYPE a2 = dpInfo[cluster->centers.data[j]].log_rho_c - border_density[i][j];
+  float_t a1 = dpInfo[cluster->centers.data[i]].log_rho_c - border_density[i][j];
+  float_t a2 = dpInfo[cluster->centers.data[j]].log_rho_c - border_density[i][j];
   
-  FLOAT_TYPE e1 = Z*(dpInfo[cluster->centers.data[i]].log_rho_err + border_err[i][j]);
-  FLOAT_TYPE e2 = Z*(dpInfo[cluster->centers.data[j]].log_rho_err + border_err[i][j]);
+  float_t e1 = Z*(dpInfo[cluster->centers.data[i]].log_rho_err + border_err[i][j]);
+  float_t e2 = Z*(dpInfo[cluster->centers.data[j]].log_rho_err + border_err[i][j]);
   */
 
-  FLOAT_TYPE a1 = dens1 - dens_border;
-  FLOAT_TYPE a2 = dens2 - dens_border;
+  float_t a1 = dens1 - dens_border;
+  float_t a2 = dens2 - dens_border;
 
-  FLOAT_TYPE e1 = Z*(dens1_err + dens_border_err);
-  FLOAT_TYPE e2 = Z*(dens2_err + dens_border_err);
+  float_t e1 = Z*(dens1_err + dens_border_err);
+  float_t e2 = Z*(dens2_err + dens_border_err);
 
   return (a1 < e1 || a2 < e2);
 }
 
 
-int merging_roles( FLOAT_TYPE dens1, FLOAT_TYPE dens1_err,
-			  FLOAT_TYPE dens2, FLOAT_TYPE dens2_err,
-			  FLOAT_TYPE dens_border, FLOAT_TYPE dens_border_err )
+int merging_roles( float_t dens1, float_t dens1_err,
+			  float_t dens2, float_t dens2_err,
+			  float_t dens_border, float_t dens_border_err )
 {
       
-  FLOAT_TYPE c1 = (dens1 - dens_border) / (dens1_err + dens_border_err); 
-  FLOAT_TYPE c2 = (dens2 - dens_border) / (dens2_err + dens_border_err);
+  float_t c1 = (dens1 - dens_border) / (dens1_err + dens_border_err); 
+  float_t c2 = (dens2 - dens_border) / (dens2_err + dens_border_err);
   //printf("%.10lf %.10lf %d\n",c1,c2, c1 > c2);
   
   return ( c1 < c2 );     // if 1, this signal to swap 1 and 2
@@ -1312,7 +1258,7 @@ void fix_SparseBorders_A_into_B(idx_t s,idx_t t,Clusters* c)
 
 }
 
-void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, int halo, int num_threads, bool verbose)
+void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int halo, int num_threads, bool verbose)
 {
   if(verbose) printf("Using sparse implementation\n");
   #define borders cluster->borders
@@ -1347,12 +1293,12 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, 
 	      SparseBorder_t b = cluster -> SparseBorders[i].data[el];
 	      if( b.j > b.i)
 	      {
-		      FLOAT_TYPE dens1           = dpInfo[cluster->centers.data[b.i]].log_rho_c;
-		      FLOAT_TYPE dens1_err       = dpInfo[cluster->centers.data[b.i]].log_rho_err;
-		      FLOAT_TYPE dens2           = dpInfo[cluster->centers.data[b.j]].log_rho_c;
-		      FLOAT_TYPE dens2_err       = dpInfo[cluster->centers.data[b.j]].log_rho_err;
-		      FLOAT_TYPE dens_border     = b.density;
-		      FLOAT_TYPE dens_border_err = b.error;
+		      float_t dens1           = dpInfo[cluster->centers.data[b.i]].log_rho_c;
+		      float_t dens1_err       = dpInfo[cluster->centers.data[b.i]].log_rho_err;
+		      float_t dens2           = dpInfo[cluster->centers.data[b.j]].log_rho_c;
+		      float_t dens2_err       = dpInfo[cluster->centers.data[b.j]].log_rho_err;
+		      float_t dens_border     = b.density;
+		      float_t dens_border_err = b.error;
 	      
 		      if ( is_a_merging( dens1, dens1_err, dens2, dens2_err, dens_border, dens_border_err, Z ) )
 			{
@@ -1403,15 +1349,15 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, 
 
                 //pick who am I
 
-                FLOAT_TYPE dens1           = dpInfo[cluster->centers.data[new_src]].log_rho_c;
-                FLOAT_TYPE dens1_err       = dpInfo[cluster->centers.data[new_src]].log_rho_err;
-                FLOAT_TYPE dens2           = dpInfo[cluster->centers.data[new_trg]].log_rho_c;
-                FLOAT_TYPE dens2_err       = dpInfo[cluster->centers.data[new_trg]].log_rho_err;
+                float_t dens1           = dpInfo[cluster->centers.data[new_src]].log_rho_c;
+                float_t dens1_err       = dpInfo[cluster->centers.data[new_src]].log_rho_err;
+                float_t dens2           = dpInfo[cluster->centers.data[new_trg]].log_rho_c;
+                float_t dens2_err       = dpInfo[cluster->centers.data[new_trg]].log_rho_err;
 
 		//borders get
 		SparseBorder_t b 	   = SparseBorder_get(cluster, new_src, new_trg);
-                FLOAT_TYPE dens_border     = b.density;
-                FLOAT_TYPE dens_border_err = b.error;
+                float_t dens_border     = b.density;
+                float_t dens_border_err = b.error;
 
                 int i_have_to_merge = is_a_merging(dens1,dens1_err,dens2,dens2_err,dens_border,dens_border_err,Z);            
                 switch (i_have_to_merge && src != trg)
@@ -1553,13 +1499,13 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, 
     {
     case 1:
 	{
-		FLOAT_TYPE* max_border_den_array = (FLOAT_TYPE*)malloc(final_cluster_count*sizeof(FLOAT_TYPE));
+		float_t* max_border_den_array = (float_t*)malloc(final_cluster_count*sizeof(float_t));
 		#pragma omp parallel
 		{
 		    #pragma omp for
 		    for(idx_t c = 0; c < final_cluster_count; ++c)
 		    {
-				FLOAT_TYPE max_border_den = -2.;
+				float_t max_border_den = -2.;
 				for(idx_t el = 0; el < cluster -> SparseBorders[c].count; ++el)
 				{
 					SparseBorder_t b = cluster -> SparseBorders[c].data[el];
@@ -1621,7 +1567,7 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, 
 }
 
 
-void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, int halo, int num_threads, bool verbose)
+void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int halo, int num_threads, bool verbose)
 {
   if(verbose) printf("Using dense implementation\n");
   #define borders cluster->borders
@@ -1656,12 +1602,12 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, i
                     
 	  case 1:		
 	    {
-	      FLOAT_TYPE dens1           = dpInfo[cluster->centers.data[i]].log_rho_c;
-	      FLOAT_TYPE dens1_err       = dpInfo[cluster->centers.data[i]].log_rho_err;
-	      FLOAT_TYPE dens2           = dpInfo[cluster->centers.data[j]].log_rho_c;
-	      FLOAT_TYPE dens2_err       = dpInfo[cluster->centers.data[j]].log_rho_err;
-	      FLOAT_TYPE dens_border     = borders[i][j].density;
-	      FLOAT_TYPE dens_border_err = borders[i][j].error;
+	      float_t dens1           = dpInfo[cluster->centers.data[i]].log_rho_c;
+	      float_t dens1_err       = dpInfo[cluster->centers.data[i]].log_rho_err;
+	      float_t dens2           = dpInfo[cluster->centers.data[j]].log_rho_c;
+	      float_t dens2_err       = dpInfo[cluster->centers.data[j]].log_rho_err;
+	      float_t dens_border     = borders[i][j].density;
+	      float_t dens_border_err = borders[i][j].error;
 	      
 	    if ( is_a_merging( dens1, dens1_err, dens2, dens2_err, dens_border, dens_border_err, Z ) )
 		{
@@ -1720,13 +1666,13 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, i
 
                 //pick who am I
 
-                FLOAT_TYPE dens1           = dpInfo[cluster->centers.data[new_src]].log_rho_c;
-                FLOAT_TYPE dens1_err       = dpInfo[cluster->centers.data[new_src]].log_rho_err;
-                FLOAT_TYPE dens2           = dpInfo[cluster->centers.data[new_trg]].log_rho_c;
-                FLOAT_TYPE dens2_err       = dpInfo[cluster->centers.data[new_trg]].log_rho_err;
+                float_t dens1           = dpInfo[cluster->centers.data[new_src]].log_rho_c;
+                float_t dens1_err       = dpInfo[cluster->centers.data[new_src]].log_rho_err;
+                float_t dens2           = dpInfo[cluster->centers.data[new_trg]].log_rho_c;
+                float_t dens2_err       = dpInfo[cluster->centers.data[new_trg]].log_rho_err;
 
-                FLOAT_TYPE dens_border     = borders[new_src][new_trg].density;
-                FLOAT_TYPE dens_border_err = borders[new_src][new_trg].error;
+                float_t dens_border     = borders[new_src][new_trg].density;
+                float_t dens_border_err = borders[new_src][new_trg].error;
 
                 int i_have_to_merge = is_a_merging(dens1,dens1_err,dens2,dens2_err,dens_border,dens_border_err,Z);            
                 switch (i_have_to_merge && src != trg)
@@ -1870,13 +1816,13 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, i
     {
     case 1:
 	{
-		FLOAT_TYPE* max_border_den_array = (FLOAT_TYPE*)malloc(final_cluster_count*sizeof(FLOAT_TYPE));
+		float_t* max_border_den_array = (float_t*)malloc(final_cluster_count*sizeof(float_t));
 		#pragma omp parallel
 		{
 		    #pragma omp for
 		    for(idx_t c = 0; c < final_cluster_count; ++c)
 		    {
-			FLOAT_TYPE max_border_den = -2.;
+			float_t max_border_den = -2.;
 			for(idx_t d = 0; d < final_cluster_count; ++d)
 			{
 			    if(tmp_borders[c][d].density > max_border_den)
@@ -1935,7 +1881,7 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, i
 }
 
 
-void Heuristic3(Clusters* cluster, Datapoint_info* dpInfo, FLOAT_TYPE Z, int halo, int num_threads, bool verbose)
+void Heuristic3(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int halo, int num_threads, bool verbose)
 {
 	if(cluster -> UseSparseBorders)
 	{
@@ -1957,14 +1903,14 @@ void freeDatapointArray(Datapoint_info* d, size_t n)
 int FloatAndUintSize()
 {
 	int v = 0;
-	int vf = sizeof(FLOAT_TYPE) == 8 ? 1 : 0; 
+	int vf = sizeof(float_t) == 8 ? 1 : 0; 
 	int vi = sizeof(idx_t) == 8 ? 1 : 0; 
 	v = vf + vi*2;
 	return v;
 }
 
 
-void setRhoErrK(Datapoint_info* points, FLOAT_TYPE* rho, FLOAT_TYPE* rhoErr, idx_t* k, size_t n)
+void setRhoErrK(Datapoint_info* points, float_t* rho, float_t* rhoErr, idx_t* k, size_t n)
 {
 	for(size_t i = 0; i < n; ++i)
 	{
@@ -1976,8 +1922,9 @@ void setRhoErrK(Datapoint_info* points, FLOAT_TYPE* rho, FLOAT_TYPE* rhoErr, idx
 	return;
 }
 
-
-Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, int ncols, int rmax) { //use it to prune isolated pixels
+Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int ncols, int rmax,
+                                      density_alg_t algorithm, bool use_log, bool use_adaptive_radius) 
+{ 
     struct timespec start_tot, finish_tot;
     double elapsed_tot;
 
@@ -1990,84 +1937,157 @@ Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, in
 	int* tmp_mask = (int*)malloc(nrows*ncols*sizeof(int));
 	for(int idx = 0; idx < nrows*ncols; ++idx) tmp_mask[idx] = 1;
 
-	#pragma omp parallel for schedule(dynamic)
-	for(int i = 0; i < nrows; ++i)			
-	for(int j = 0; j < ncols; ++j)			
-	{
-		int n = 0;
-		FLOAT_TYPE avg = 0;
-		FLOAT_TYPE var = 0;
-		int r = 1;
-		if(mask[i*ncols + j])
-		{
-			for(r = 1; r < rmax; ++r)
-			{
-				FLOAT_TYPE tmp_avg = avg;
-				FLOAT_TYPE tmp_var = var;
-				int 	   tmp_n   = n;
+    switch(algorithm)
+    {
+        case MEAN:
+            #pragma omp parallel for schedule(dynamic)
+            for(int i = 0; i < nrows; ++i)			
+                for(int j = 0; j < ncols; ++j)			
+                {
+                    int n = 0;
+                    float_t avg = 0;
+                    float_t var = 0;
+                    int r = use_adaptive_radius ? 1 : rmax - 1;
+                    if(mask[i*ncols + j])
+                    {
+                        for(r = 1; r < rmax; ++r)
+                        {
+                            float_t tmp_avg = avg;
+                            float_t tmp_var = var;
+                            int 	tmp_n   = n;
 
-				n = 0;
-				avg = 0;
-				var = 0;
-				int jjmin = j - r > 0 			? j - r : 0;  
-				int jjmax = j + r + 1 < ncols 	? j + r + 1 : ncols;  
+                            n = 0;
+                            avg = 0;
+                            var = 0;
+                            int jjmin = j - r > 0 			? j - r : 0;  
+                            int jjmax = j + r + 1 < ncols 	? j + r + 1 : ncols;  
 
-				int iimin = i - r > 0 	 		? i - r : 0;  
-				int iimax = i + r + 1 < nrows 	? i + r + 1 : nrows;  
+                            int iimin = i - r > 0 	 		? i - r : 0;  
+                            int iimax = i + r + 1 < nrows 	? i + r + 1 : nrows;  
 
-				for(int ii = iimin; ii < iimax; ++ii)
-					for(int jj = jjmin; jj < jjmax; ++jj)
-					{
-						int index = ii*ncols + jj;
-						n 	+= (mask[index] ? 1 : 0);	
-						avg += (mask[index] ? vals[index] : 0.);	
-						var += (mask[index] ? vals[index]*vals[index] : 0.);	
-					}
-				if(n > 1)
-				{
-					avg = avg/(float_t)n;
-					var = var/(float_t)(n-1) - avg*avg*(float_t)n/(float_t)(n-1); 	
-					var = var/(float_t)(n);
-				}
+                            for(int ii = iimin; ii < iimax; ++ii)
+                                for(int jj = jjmin; jj < jjmax; ++jj)
+                                {
+                                    int index = ii*ncols + jj;
+                                    n 	+= (mask[index] ? 1 : 0);	
+                                    avg += (mask[index] ? vals[index] : 0.);	
+                                    var += (mask[index] ? vals[index]*vals[index] : 0.);	
+                                }
+                            if(n > 1)
+                            {
+                                avg = avg/(float_t)n;
+                                var = var/(float_t)(n-1) - avg*avg*(float_t)n/(float_t)(n-1); 	
+                                var = var/(float_t)(n);
+                            }
 
-				if(tmp_n > 2)
-				{
-					float_t sigma_comp = sqrt(var + tmp_var);
-					//float_t sigma_comp = sqrt(var);
-					int compatibilityCondition = (avg - tmp_avg < sigma_comp) && (tmp_avg - avg < sigma_comp);
-					//int compatibilityCondition = (var < tmp_var);
+                            if(tmp_n > 1)
+                            {
+                                float_t sigma_comp = sqrt(var + tmp_var);
+                                int compatibilityCondition = (avg - tmp_avg < sigma_comp) && (tmp_avg - avg < sigma_comp);
+                                if(!compatibilityCondition)
+                                {
+                                    var = tmp_var;
+                                    avg = tmp_avg;
+                                    n   = tmp_n;
+                                    break;
+                                }
+                            }
 
-					if(!compatibilityCondition)
-					{
-						break;
-						var = tmp_var;
-						avg = tmp_avg;
-					}
+                        }
+                    }
+                    if(n > 1 && mask[i*ncols + j])
+                    {
+                        p[i*ncols + j].log_rho = use_log ? log(avg) : avg;
+                        p[i*ncols + j].log_rho_err = use_log ? sqrt(var)/avg : sqrt(avg);
+                        p[i*ncols + j].g = p[i*ncols + j].log_rho - p[i*ncols + j].log_rho_err;
+                        p[i*ncols + j].kstar = (idx_t)r;
+                        p[i*ncols + j].array_idx = i*ncols + j;
+                        p[i*ncols + j].cluster_idx = -1;
+                    }
+                    else
+                    {
+                        tmp_mask[i*ncols + j] = 0;
+                        p[i*ncols + j].log_rho = -FLT_MAX;
+                        p[i*ncols + j].g = -FLT_MAX; 
+                        p[i*ncols + j].array_idx = i*ncols + j;
+                        p[i*ncols + j].cluster_idx = -1;
+                    }
+                }
+            break;
+        case MEDIAN:
+            #pragma omp parallel 
+            {
+                float_t* vals_for_median = (float_t*)calloc((2*rmax+1)*(2*rmax+1), sizeof(float_t)); 
+                #pragma omp for schedule(dynamic)
+                for(int i = 0; i < nrows; ++i)			
+                    for(int j = 0; j < ncols; ++j)			
+                    {
+                        int n = 0;
+                        float_t avg = 0;
+                        float_t var = 0;
+                        if(mask[i*ncols + j])
+                        {
+                            n = 0;
+                            avg = 0;
+                            var = 0;
+                            int jjmin = j - rmax > 0 			? j - rmax : 0;  
+                            int jjmax = j + rmax + 1 < ncols 	? j + rmax + 1 : ncols;  
 
+                            int iimin = i - rmax > 0 	 		? i - rmax : 0;  
+                            int iimax = i + rmax + 1 < nrows 	? i + rmax + 1 : nrows;  
 
-				}
+                            for(int ii = iimin; ii < iimax; ++ii)
+                                for(int jj = jjmin; jj < jjmax; ++jj)
+                                {
+                                    int index = ii*ncols + jj;
+                                    vals_for_median[n] = vals[index];
+                                    n 	+= (mask[index] ? 1 : 0);	
+                                    avg += (mask[index] ? vals[index] : 0.);	
+                                    var += (mask[index] ? vals[index]*vals[index] : 0.);	
+                                }
+                        }
+                        if(n > 1 && mask[i*ncols + j])
+                        {
+                            avg = avg/(float_t)n;
+                            var = var/(float_t)(n-1) - avg*avg*(float_t)n/(float_t)(n-1); 	
+                            var = var/(float_t)(n);
 
-		}
-		}
-		if(n > 1 && mask[i*ncols + j])
-		{
-			p[i*ncols + j].log_rho = log(avg);
-			p[i*ncols + j].log_rho_err = sqrt(var)/avg;
-			p[i*ncols + j].g = p[i*ncols + j].log_rho - p[i*ncols + j].log_rho_err;
-			p[i*ncols + j].kstar = (idx_t)r;
-			p[i*ncols + j].array_idx = i*ncols + j;
-			p[i*ncols + j].cluster_idx = -1;
-		}
-		else
-		{
-			tmp_mask[i*ncols + j] = 0;
-			p[i*ncols + j].log_rho = -99999.;
-			p[i*ncols + j].g = -99999.; 
-			p[i*ncols + j].array_idx = i*ncols + j;
-			p[i*ncols + j].cluster_idx = -1;
-		}
+                            qsort(vals_for_median, n, sizeof(float_t), cmp);
+                            float_t median = 0.;
+                            if(n % 2 == 0)
+                            {   
+                                median = vals_for_median[n/2 - 1] + vals_for_median[n / 2]; 
+                                median = median/2.;
+                            }
+                            else 
+                            {
+                                median = vals_for_median[n/2]; 
+                            }
 
-	}
+                            p[i*ncols + j].log_rho = use_log ? log(median) : median;
+                            p[i*ncols + j].log_rho_err = use_log ? sqrt(var)/avg : sqrt(var);
+                            p[i*ncols + j].g = p[i*ncols + j].log_rho - p[i*ncols + j].log_rho_err;
+                            p[i*ncols + j].kstar = (idx_t)rmax;
+                            p[i*ncols + j].array_idx = i*ncols + j;
+                            p[i*ncols + j].cluster_idx = -1;
+                        }
+                        else
+                        {
+                            tmp_mask[i*ncols + j] = 0;
+                            p[i*ncols + j].log_rho = -FLT_MAX;
+                            p[i*ncols + j].g = -FLT_MAX; 
+                            p[i*ncols + j].array_idx = i*ncols + j;
+                            p[i*ncols + j].cluster_idx = -1;
+                        }
+
+                    }
+                free(vals_for_median);
+            }
+            break;
+        default:
+            printf("Select a valid algorithm `MEAN` or `MEDIAN` for the density computation\n");
+            break;
+    }
 	for(int idx = 0; idx < nrows*ncols; ++idx) mask[idx] = mask[idx] * tmp_mask[idx];
 	free(tmp_mask);
 
@@ -2088,15 +2108,15 @@ Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, in
 void tiny_colorize(
         const char* fname, 
         Datapoint_info* dp, 
-        FLOAT_TYPE* data, 
+        float_t* data, 
         uint32_t n_clusters, 
         uint32_t og_width, 
         uint32_t og_height, 
         uint32_t target_width,
         uint32_t target_height)
 {
-    FLOAT_TYPE a = 1;
-    FLOAT_TYPE c = 0.99;
+    float_t a = 1;
+    float_t c = 0.99;
 
     unsigned char* img_buffer = (unsigned char*)malloc(3 * (og_width * 2) * og_height);
 
@@ -2126,8 +2146,8 @@ void tiny_colorize(
             img_buffer[BLUE(idx)] = palette[BLUE(cluster_idx)]; 
         }
 
-    FLOAT_TYPE data_max = -9999999.f;
-    FLOAT_TYPE data_min =  9999999.f;
+    float_t data_max = -9999999.f;
+    float_t data_min =  9999999.f;
     for(uint32_t i = 0; i < og_height; ++i)
         for(uint32_t j = 0; j < og_width; ++j)
         {
@@ -2135,18 +2155,18 @@ void tiny_colorize(
             data_min = MIN(data_min, data[i * og_width + j] );
         }
 
-    FLOAT_TYPE delta = 1./(data_max - data_min);
+    float_t delta = 1./(data_max - data_min);
     for(uint32_t i = 0; i < og_height; ++i)
         for(uint32_t j = 0; j < og_width; ++j)
         {
             uint32_t idx = i * stride + j + offset;
-            FLOAT_TYPE val = data[i * og_width + j];
-            FLOAT_TYPE vnorm = (val - data_min)*delta;
+            float_t val = data[i * og_width + j];
+            float_t vnorm = (val - data_min)*delta;
 
             //unsigned char v = (unsigned char)(a * vnorm/(c * vnorm + (a - c))*255.);
             //unsigned char v = (unsigned char)((val - data_min)*delta*255.);
             //unsigned char v = (unsigned char)(0.5*(tanh(100 * vnorm - 2.5) + 1)*255.);
-            FLOAT_TYPE v = (a * vnorm/(c * vnorm + (a - c)));
+            float_t v = (a * vnorm/(c * vnorm + (a - c)));
 
             img_buffer[RED(idx)]    = (unsigned char)(v * 255); 
             img_buffer[GREEN(idx)]  = (unsigned char)(v * 255); 
@@ -2170,13 +2190,13 @@ void tiny_colorize(
 #undef GREEN
 #undef RED
 
-void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask, 
+void compute_covs(float_t* image, int* segmentation_map, int* mask, 
                   int nrows, int ncols, int nclusters, 
-                  FLOAT_TYPE* centers_of_mass, 
-                  FLOAT_TYPE* cov_matrices, 
-                  FLOAT_TYPE* flux,
+                  float_t* centers_of_mass, 
+                  float_t* cov_matrices, 
+                  float_t* flux,
                   int* areas,
-                  FLOAT_TYPE* rmax,
+                  float_t* rmax,
                   int* parent_id,
                   int* x_limits,
                   int* y_limits)
@@ -2210,10 +2230,10 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
 
     #pragma omp parallel
     {
-        FLOAT_TYPE* pvt_centers_of_mass = (FLOAT_TYPE*)calloc(2 * nclusters, sizeof(FLOAT_TYPE));
-        FLOAT_TYPE* pvt_cov_matrices    = (FLOAT_TYPE*)calloc(4 * nclusters, sizeof(FLOAT_TYPE));
-        FLOAT_TYPE* pvt_flux            = (FLOAT_TYPE*)calloc(nclusters, sizeof(FLOAT_TYPE));
-        FLOAT_TYPE* pvt_r_max           = (FLOAT_TYPE*)calloc(nclusters, sizeof(FLOAT_TYPE));
+        float_t* pvt_centers_of_mass = (float_t*)calloc(2 * nclusters, sizeof(float_t));
+        float_t* pvt_cov_matrices    = (float_t*)calloc(4 * nclusters, sizeof(float_t));
+        float_t* pvt_flux            = (float_t*)calloc(nclusters, sizeof(float_t));
+        float_t* pvt_r_max           = (float_t*)calloc(nclusters, sizeof(float_t));
         
         int* pvt_areas                  = (int*)calloc(nclusters, sizeof(int));
         int* pvt_x_limits               = (int*)calloc(2 * nclusters, sizeof(int));
@@ -2236,11 +2256,11 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
                 int lab = segmentation_map[yy*ncols + xx]; 
                 if (lab != -1)
                 {   
-                    FLOAT_TYPE pix_flux = image[yy*ncols + xx];
+                    float_t pix_flux = image[yy*ncols + xx];
                     if (pix_flux < 0) pix_flux = fabs(pix_flux);
                     {
-                        pvt_centers_of_mass[2*lab]     += (FLOAT_TYPE)xx * pix_flux;
-                        pvt_centers_of_mass[2*lab + 1] += (FLOAT_TYPE)yy * pix_flux;
+                        pvt_centers_of_mass[2*lab]     += (float_t)xx * pix_flux;
+                        pvt_centers_of_mass[2*lab + 1] += (float_t)yy * pix_flux;
                         pvt_flux[lab]                  += pix_flux;
                     }
                     
@@ -2338,11 +2358,11 @@ void compute_covs(FLOAT_TYPE* image, int* segmentation_map, int* mask,
                 int lab = segmentation_map[yy*ncols + xx]; 
                 if(lab != -1)
                 {
-                    float x_n = (FLOAT_TYPE)xx - centers_of_mass[2*lab];
-                    float y_n = (FLOAT_TYPE)yy - centers_of_mass[2*lab + 1];
+                    float x_n = (float_t)xx - centers_of_mass[2*lab];
+                    float y_n = (float_t)yy - centers_of_mass[2*lab + 1];
 
-                    FLOAT_TYPE pix_flux = image[yy*ncols + xx];
-                    FLOAT_TYPE r        = sqrt(x_n * x_n + y_n * y_n);
+                    float_t pix_flux = image[yy*ncols + xx];
+                    float_t r        = sqrt(x_n * x_n + y_n * y_n);
                     if (r > pvt_r_max[lab]) pvt_r_max[lab] = r;
                     
                     // pvt_cov_matrices[4*lab    ] += x_n * x_n;
@@ -2486,7 +2506,7 @@ void compute_eigensystem_2x2(const double *A, double *lambda, double *V) {
     }
 }
 
-void compute_eigensystems(FLOAT_TYPE* cov_matrices, FLOAT_TYPE* lambdas, FLOAT_TYPE* vs, int nclusters)
+void compute_eigensystems(float_t* cov_matrices, float_t* lambdas, float_t* vs, int nclusters)
 {
     #pragma omp parallel for
     for(int lab = 0; lab < nclusters; ++lab)

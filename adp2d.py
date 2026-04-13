@@ -215,13 +215,16 @@ class Data():
 
         #retrieve function pointers form .so file
 
-        #Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, size_t nrows, size_t ncols)
+        #Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, int ncols, int rmax, density_alg_t algorithm, bool use_log, bool use_adaptive_radius)
         self.__computeDensityFromImg = self.lib.computeDensityFromImg
         self.__computeDensityFromImg.argtypes = [   np.ctypeslib.ndpointer(ctFloatType), 
                                                     np.ctypeslib.ndpointer(np.int32),
                                                     ct.c_int32,
                                                     ct.c_int32,
-                                                    ct.c_int32]
+                                                    ct.c_int32,
+                                                    ct.c_int32,
+                                                    ct.c_bool,
+                                                    ct.c_bool]
         self.__computeDensityFromImg.restype  = ct.POINTER(DatapointInfo)
 
         #void setRhoErrK(Datapoint_info* points, FLOAT_TYPE* rho, FLOAT_TYPE* rhoErr, idx_t* k, size_t n)
@@ -237,26 +240,27 @@ class Data():
         self.__computeCorrection.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), ctIdxType, ct.c_double]
 
         self.__H1 = self.lib.Heuristic1
-        #Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols);
-        self.__H1.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), ct.c_int32, ct.c_int32]
+        #Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int num_threads, bool verbose);
+        self.__H1.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), ct.c_uint64, ct.c_uint64, ct.c_int32, ct.c_bool]
         self.__H1.restype = Clusters
 
         self.__adpWrapper = self.lib.adpWrapper
-        #Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, float Z, int min_area, bool halo, bool split_per_thread) 
+        #Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int min_area, float Z, bool halo, bool split_per_thread) 
         self.__adpWrapper.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), 
-                                      ct.c_int32, ct.c_int32, ct.c_int32, ct.c_float, ct.c_bool, ct.c_bool]
+                                      ct.c_uint64, ct.c_uint64, ct.c_int32, ct.c_float, ct.c_bool, ct.c_bool]
         self.__adpWrapper.restype = Clusters
 
         self.__ClustersAllocate = self.lib.Clusters_allocate
         self.__ClustersAllocate.argtypes = [ct.POINTER(Clusters), ct.c_int]
 
         self.__H2 = self.lib.Heuristic2
-        #void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols);
+        #void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int num_threads, bool verbose);
         self.__H2.argtypes = [ct.POINTER(Clusters), ct.POINTER(DatapointInfo), 
-                              np.ctypeslib.ndpointer(ct.c_int32), ct.c_uint64, ct.c_uint64]
+                              np.ctypeslib.ndpointer(ct.c_int32), ct.c_uint64, ct.c_uint64, ct.c_int32, ct.c_bool]
 
         self.__H3 = self.lib.Heuristic3
-        self.__H3.argtypes = [ct.POINTER(Clusters), ct.POINTER(DatapointInfo), ct.c_double, ct.c_int]
+        #void Heuristic3(Clusters *cluster, Datapoint_info *particles, FLOAT_TYPE Z, int halo, int num_threads, bool verbose);
+        self.__H3.argtypes = [ct.POINTER(Clusters), ct.POINTER(DatapointInfo), ct.c_double, ct.c_int, ct.c_int, ct.c_bool]
         
         self.__freeDatapoints = self.lib.freeDatapointArray
         self.__freeDatapoints.argtypes = [ct.POINTER(DatapointInfo), ct.c_uint64]
@@ -342,7 +346,7 @@ class Data():
         self.density           = None
         self.densityError      = None
 
-    def computeDensityFromImg(self,img, mask = None, r = 15):
+    def computeDensityFromImg(self, img, mask = None, r = 15, algorithm = "MEAN", use_log = True, use_adaptive_radius = False):
         if mask is None:
             mask = np.ones_like(img, dtype = np.int32)
         self.n = np.prod(img.shape)
@@ -350,7 +354,10 @@ class Data():
         self.nrows, self.ncols = img.shape
         self.img = img
         self.mask = mask
-        self.__datapoints = self.__computeDensityFromImg(img,mask, img.shape[0], img.shape[1], r)
+
+        alg_val = 0 if algorithm == "MEAN" else 1
+
+        self.__datapoints = self.__computeDensityFromImg(img, mask, self.nrows, self.ncols, r, alg_val, use_log, use_adaptive_radius)
         self.state["density"] = True
 
 
