@@ -217,14 +217,15 @@ class Data():
 
         #Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, int ncols, int rmax, density_alg_t algorithm, bool use_log, bool use_adaptive_radius)
         self.__computeDensityFromImg = self.lib.computeDensityFromImg
-        self.__computeDensityFromImg.argtypes = [   np.ctypeslib.ndpointer(ctFloatType), 
+        self.__computeDensityFromImg.argtypes = [   np.ctypeslib.ndpointer(ctFloatType),
                                                     np.ctypeslib.ndpointer(np.int32),
                                                     ct.c_int32,
                                                     ct.c_int32,
                                                     ct.c_int32,
                                                     ct.c_int32,
                                                     ct.c_bool,
-                                                    ct.c_bool]
+                                                    ct.c_bool,
+                                                    ct.c_int32]
         self.__computeDensityFromImg.restype  = ct.POINTER(DatapointInfo)
 
         #void setRhoErrK(Datapoint_info* points, FLOAT_TYPE* rho, FLOAT_TYPE* rhoErr, idx_t* k, size_t n)
@@ -346,18 +347,33 @@ class Data():
         self.density           = None
         self.densityError      = None
 
-    def computeDensityFromImg(self, img, mask = None, r = 15, algorithm = "MEAN", use_log = True, use_adaptive_radius = False):
+    def computeDensityFromImg(self, img, mask=None, r=15, algorithm="MEAN", use_log=True, use_adaptive_radius=False, param=None):
         if mask is None:
-            mask = np.ones_like(img, dtype = np.int32)
+            mask = np.ones_like(img, dtype=np.int32)
         self.n = np.prod(img.shape)
         mask = mask.astype(np.int32)
         self.nrows, self.ncols = img.shape
         self.img = img
         self.mask = mask
 
-        alg_val = 0 if algorithm == "MEAN" else 1
+        if algorithm == "MEAN":
+            alg_val = 0
+        elif algorithm == "MEDIAN":
+            alg_val = 1
+        elif algorithm == "GAUSSIAN":
+            alg_val = 2
+        elif algorithm == "SPLINE":
+            alg_val = 3
+        else:
+            raise ValueError(f"Unknown algorithm: {algorithm}. Use 'MEAN', 'MEDIAN', 'GAUSSIAN', or 'SPLINE'.")
 
-        self.__datapoints = self.__computeDensityFromImg(img, mask, self.nrows, self.ncols, r, alg_val, use_log, use_adaptive_radius)
+        if param is None:
+            if algorithm == "SPLINE":
+                param = r // 2
+            else:
+                param = r // 3
+
+        self.__datapoints = self.__computeDensityFromImg(img, mask, self.nrows, self.ncols, r, alg_val, use_log, use_adaptive_radius, param)
         self.state["density"] = True
 
 

@@ -27,20 +27,22 @@ data = Data(array)
 Computes the density of data points from an image.
 
 ```python
-data.computeDensityFromImg(img, mask=None, r=15, algorithm="MEAN", use_log=True, use_adaptive_radius=False)
+data.computeDensityFromImg(img, mask=None, r=15, algorithm="MEAN", use_log=True, use_adaptive_radius=False, param=None)
 ```
 
 **Parameters:**
 - `img` (numpy.ndarray): 2D image array
 - `mask` (numpy.ndarray, optional): Integer mask array (defaults to ones_like(img))
 - `r` (int, optional): Neighborhood radius (default: 15)
-- `algorithm` (str, optional): Density algorithm ("MEAN" or "MEDIAN") (default: "MEAN")
+- `algorithm` (str, optional): Density algorithm ("MEAN", "MEDIAN", "GAUSSIAN", or "SPLINE") (default: "MEAN")
 - `use_log` (bool, optional): Whether to use logarithmic density (default: True)
 - `use_adaptive_radius` (bool, optional): Whether to use adaptive radius (default: False)
+- `param` (int, optional): Smoothing parameter. If None, defaults to r // 2 for "SPLINE", or r // 3 for other algorithms (default: None)
 
 **Notes:**
 - This method must be called before clustering operations
 - Internally calls the C function `computeDensityFromImg`
+- Supported algorithms: MEAN (adaptive kernel), MEDIAN (fixed kernel with median), GAUSSIAN (gaussian kernel), SPLINE (cubic spline kernel)
 
 #### `computeClusteringADP`
 

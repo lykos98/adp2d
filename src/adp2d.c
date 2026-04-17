@@ -1922,8 +1922,89 @@ void setRhoErrK(Datapoint_info* points, float_t* rho, float_t* rhoErr, idx_t* k,
 	return;
 }
 
+void convolve(
+    Datapoint_info* p,
+    int*            tmp_mask,
+    const float_t*  vals,
+    const int*      mask,
+    const float_t*  kernel,
+    int             nrows,
+    int             ncols,
+    int             rmax,
+    bool            use_log)
+{
+    idx_t row_len = 2 * rmax + 1;
+
+    #pragma omp parallel for schedule(dynamic)
+    for(int i = 0; i < nrows; ++i)
+        for(int j = 0; j < ncols; ++j)
+        {
+            float_t avg    = 0;
+            float_t var    = 0;
+            float_t w_sum  = 0;
+            float_t w2_sum = 0;
+
+            int idx = i*ncols + j;
+
+            if(mask[idx])
+            {
+                int jjmin = j - rmax > 0          ? j - rmax     : 0;
+                int jjmax = j + rmax + 1 < ncols   ? j + rmax + 1 : ncols;
+                int iimin = i - rmax > 0           ? i - rmax     : 0;
+                int iimax = i + rmax + 1 < nrows   ? i + rmax + 1 : nrows;
+
+                for(int ii = iimin; ii < iimax; ++ii)
+                    for(int jj = jjmin; jj < jjmax; ++jj)
+                    {
+                        int index = ii*ncols + jj;
+                        if(!mask[index]) continue;
+
+                        float_t w  = kernel[(ii - i + rmax) * row_len + (jj - j + rmax)];
+                        avg       += w * vals[index];
+                        w_sum     += w;
+                    }
+
+                if(w_sum > 0) avg /= w_sum;
+
+                for(int ii = iimin; ii < iimax; ++ii)
+                    for(int jj = jjmin; jj < jjmax; ++jj)
+                    {
+                        int index = ii*ncols + jj;
+                        if(!mask[index]) continue;
+
+                        float_t w  = kernel[(ii - i + rmax) * row_len + (jj - j + rmax)];
+                        float_t d  = vals[index] - avg;
+                        var       += w * d * d;
+                        w2_sum    += w * w;
+                    }
+
+                float_t denom = w_sum - w2_sum / w_sum;
+                if(denom > 0) var /= denom;
+                else          var  = 0;
+            }
+
+            if(w_sum > 0 && mask[idx])
+            {
+                p[idx].log_rho     = use_log ? log(avg) : avg;
+                p[idx].log_rho_err = use_log ? sqrt(var) / avg : sqrt(avg);
+                p[idx].g           = p[idx].log_rho - p[idx].log_rho_err;
+                p[idx].kstar       = (idx_t)rmax;
+                p[idx].array_idx   = idx;
+                p[idx].cluster_idx = -1;
+            }
+            else
+            {
+                tmp_mask[idx]      = 0;
+                p[idx].log_rho     = -FLT_MAX;
+                p[idx].g           = -FLT_MAX;
+                p[idx].array_idx   = idx;
+                p[idx].cluster_idx = -1;
+            }
+        }
+}
+
 Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int ncols, int rmax,
-                                      density_alg_t algorithm, bool use_log, bool use_adaptive_radius) 
+                                      density_alg_t algorithm, bool use_log, bool use_adaptive_radius, int param) 
 { 
     struct timespec start_tot, finish_tot;
     double elapsed_tot;
@@ -2082,6 +2163,63 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
 
                     }
                 free(vals_for_median);
+            }
+            break;
+        case GAUSSIAN:
+            {
+                float_t* gaussian_weights = (float_t*)calloc((2 * rmax + 1) * (2 * rmax + 1), sizeof(float_t));
+                // produce gaussian_weights
+                idx_t row_len = 2 * rmax + 1;
+                idx_t center = rmax;
+                float_t sigma_sq = (float_t)param * (float_t)param;
+
+                float_t tot_weights = 0.;
+                for(idx_t i = 0; i < 2 * rmax + 1; ++i)
+                    for(idx_t j = 0; j < 2 * rmax + 1; ++j)
+                    {
+                        float_t dist_sq = (float_t)(i - center) * (float_t)(i - center) + (float_t)(j - center) * (float_t)(j - center);
+                        gaussian_weights[i * row_len + j] = exp(- dist_sq/sigma_sq);
+                        tot_weights += gaussian_weights[i * row_len + j];
+                    }
+
+                // normalize kernel
+                for(idx_t i = 0; i < (2*rmax + 1) * (2*rmax + 1); ++i) gaussian_weights[i] = gaussian_weights[i]/tot_weights;
+
+                convolve(p, tmp_mask, vals, mask, gaussian_weights, nrows, ncols, rmax, use_log);
+
+                free(gaussian_weights);
+            }
+            break;
+        case SPLINE:
+            {
+                // Precompute SPH cubic spline weights 
+                float_t* sph_weights = (float_t*)calloc((2 * rmax + 1) * (2 * rmax + 1), sizeof(float_t));
+                idx_t row_len = 2 * rmax + 1;
+                idx_t center  = rmax;
+                float_t tot_weights = 0.;
+
+                for(idx_t i = 0; i < 2 * rmax + 1; ++i)
+                    for(idx_t j = 0; j < 2 * rmax + 1; ++j)
+                    {
+                        float_t dist = sqrt((float_t)(i - center)*(i - center)
+                                        + (float_t)(j - center)*(j - center));
+                        float_t q = dist / (float_t)param;   // normalised distance
+
+                        float_t w = 0;
+                        if     (q < 1.f) w = 1.f - 1.5f*q*q + 0.75f*q*q*q;
+                        else if(q < 2.f) w = 0.25f * (2.f - q)*(2.f - q)*(2.f - q);
+                        // q >= 2: w = 0 (compact support)
+
+                        sph_weights[i * row_len + j] = w;
+                        tot_weights += w;
+                    }
+
+                // Normalize
+                for(idx_t i = 0; i < (2*rmax+1)*(2*rmax+1); ++i) sph_weights[i] /= tot_weights;
+
+                convolve(p, tmp_mask, vals, mask, sph_weights, nrows, ncols, rmax, use_log);
+
+                free(sph_weights);
             }
             break;
         default:
