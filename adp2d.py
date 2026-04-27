@@ -521,7 +521,6 @@ class Data():
         nsources =  self.sources_properties["areas"].shape[0]
 
         hdu = fits.BinTableHDU.from_columns(columns)
-
         rec_array = np.zeros(nsources, dtype = hdu.data.dtype)
          
         if nsources > 1:
@@ -549,10 +548,10 @@ class Data():
             # handle the case in which we have only one source
             rec_array['SOURCE_ID']        = 1
             rec_array['PARENT_ID']        = self.sources_properties["parent_id"] 
-            rec_array['X_CENTER']         = self.sources_properties["centers_of_mass"][0]
-            rec_array['Y_CENTER']         = self.sources_properties["centers_of_mass"][1]
-            rec_array['XWIN_WORLD']       = self.sources_properties["world_coord"][0]
-            rec_array['YWIN_WORLD']       = self.sources_properties["world_coord"][1]
+            rec_array['X_CENTER']         = self.sources_properties["centers_of_mass"][0][0]
+            rec_array['Y_CENTER']         = self.sources_properties["centers_of_mass"][0][1]
+            rec_array['XWIN_WORLD']       = self.sources_properties["world_coord"][0][0]
+            rec_array['YWIN_WORLD']       = self.sources_properties["world_coord"][0][1]
             rec_array['X_MIN']            = self.sources_properties["x_limits"][0][0]
             rec_array['X_MAX']            = self.sources_properties["x_limits"][0][1]
             rec_array['Y_MIN']            = self.sources_properties["y_limits"][0][0]
