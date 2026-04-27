@@ -2078,6 +2078,22 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
                     }
                     if(n > 1 && mask[i*ncols + j])
                     {
+
+                        // Local density contrast test
+                        // int idx     = i*ncols + j;
+                        // float_t x   = vals[idx];
+                        // float_t eps = 1e-8;
+                        // float_t rho = (x - avg)/(avg + eps);
+
+                        // p[idx].log_rho     = rho;
+                        // p[idx].log_rho_err = sqrt(var);
+                        // p[idx].g           = p[idx].log_rho - p[idx].log_rho_err;
+                        // p[idx].kstar       = (idx_t)r;
+                        // p[idx].array_idx   = idx;
+                        // p[idx].cluster_idx = -1;
+                        
+                        //
+
                         p[i*ncols + j].log_rho = use_log ? log(avg) : avg;
                         p[i*ncols + j].log_rho_err = use_log ? sqrt(var)/avg : sqrt(avg);
                         p[i*ncols + j].g = p[i*ncols + j].log_rho - p[i*ncols + j].log_rho_err;
