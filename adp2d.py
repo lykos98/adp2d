@@ -215,12 +215,16 @@ class Data():
 
         #retrieve function pointers form .so file
 
-        #Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, size_t nrows, size_t ncols)
+        #Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, int ncols, int rmax, density_alg_t algorithm, bool use_log, bool use_adaptive_radius)
         self.__computeDensityFromImg = self.lib.computeDensityFromImg
-        self.__computeDensityFromImg.argtypes = [   np.ctypeslib.ndpointer(ctFloatType), 
+        self.__computeDensityFromImg.argtypes = [   np.ctypeslib.ndpointer(ctFloatType),
                                                     np.ctypeslib.ndpointer(np.int32),
                                                     ct.c_int32,
                                                     ct.c_int32,
+                                                    ct.c_int32,
+                                                    ct.c_int32,
+                                                    ct.c_bool,
+                                                    ct.c_bool,
                                                     ct.c_int32]
         self.__computeDensityFromImg.restype  = ct.POINTER(DatapointInfo)
 
@@ -237,26 +241,27 @@ class Data():
         self.__computeCorrection.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), ctIdxType, ct.c_double]
 
         self.__H1 = self.lib.Heuristic1
-        #Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols);
-        self.__H1.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), ct.c_int32, ct.c_int32]
+        #Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int num_threads, bool verbose);
+        self.__H1.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), ct.c_uint64, ct.c_uint64, ct.c_int32, ct.c_bool]
         self.__H1.restype = Clusters
 
         self.__adpWrapper = self.lib.adpWrapper
-        #Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, float Z, int min_area, bool halo, bool split_per_thread) 
+        #Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int min_area, float Z, bool halo, bool split_per_thread) 
         self.__adpWrapper.argtypes = [ct.POINTER(DatapointInfo), np.ctypeslib.ndpointer(ct.c_int32), 
-                                      ct.c_int32, ct.c_int32, ct.c_int32, ct.c_float, ct.c_bool, ct.c_bool]
+                                      ct.c_uint64, ct.c_uint64, ct.c_int32, ct.c_float, ct.c_bool, ct.c_bool]
         self.__adpWrapper.restype = Clusters
 
         self.__ClustersAllocate = self.lib.Clusters_allocate
         self.__ClustersAllocate.argtypes = [ct.POINTER(Clusters), ct.c_int]
 
         self.__H2 = self.lib.Heuristic2
-        #void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols);
+        #void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int num_threads, bool verbose);
         self.__H2.argtypes = [ct.POINTER(Clusters), ct.POINTER(DatapointInfo), 
-                              np.ctypeslib.ndpointer(ct.c_int32), ct.c_uint64, ct.c_uint64]
+                              np.ctypeslib.ndpointer(ct.c_int32), ct.c_uint64, ct.c_uint64, ct.c_int32, ct.c_bool]
 
         self.__H3 = self.lib.Heuristic3
-        self.__H3.argtypes = [ct.POINTER(Clusters), ct.POINTER(DatapointInfo), ct.c_double, ct.c_int]
+        #void Heuristic3(Clusters *cluster, Datapoint_info *particles, FLOAT_TYPE Z, int halo, int num_threads, bool verbose);
+        self.__H3.argtypes = [ct.POINTER(Clusters), ct.POINTER(DatapointInfo), ct.c_double, ct.c_int, ct.c_int, ct.c_bool]
         
         self.__freeDatapoints = self.lib.freeDatapointArray
         self.__freeDatapoints.argtypes = [ct.POINTER(DatapointInfo), ct.c_uint64]
@@ -342,15 +347,33 @@ class Data():
         self.density           = None
         self.densityError      = None
 
-    def computeDensityFromImg(self,img, mask = None, r = 15):
+    def computeDensityFromImg(self, img, mask=None, r=15, algorithm="MEAN", use_log=True, use_adaptive_radius=False, param=None):
         if mask is None:
-            mask = np.ones_like(img, dtype = np.int32)
+            mask = np.ones_like(img, dtype=np.int32)
         self.n = np.prod(img.shape)
         mask = mask.astype(np.int32)
         self.nrows, self.ncols = img.shape
         self.img = img
         self.mask = mask
-        self.__datapoints = self.__computeDensityFromImg(img,mask, img.shape[0], img.shape[1], r)
+
+        if algorithm == "MEAN":
+            alg_val = 0
+        elif algorithm == "MEDIAN":
+            alg_val = 1
+        elif algorithm == "GAUSSIAN":
+            alg_val = 2
+        elif algorithm == "SPLINE":
+            alg_val = 3
+        else:
+            raise ValueError(f"Unknown algorithm: {algorithm}. Use 'MEAN', 'MEDIAN', 'GAUSSIAN', or 'SPLINE'.")
+
+        if param is None:
+            if algorithm == "SPLINE":
+                param = r // 2
+            else:
+                param = r // 3
+
+        self.__datapoints = self.__computeDensityFromImg(img, mask, self.nrows, self.ncols, r, alg_val, use_log, use_adaptive_radius, param)
         self.state["density"] = True
 
 
@@ -498,7 +521,6 @@ class Data():
         nsources =  self.sources_properties["areas"].shape[0]
 
         hdu = fits.BinTableHDU.from_columns(columns)
-
         rec_array = np.zeros(nsources, dtype = hdu.data.dtype)
          
         if nsources > 1:
@@ -526,10 +548,10 @@ class Data():
             # handle the case in which we have only one source
             rec_array['SOURCE_ID']        = 1
             rec_array['PARENT_ID']        = self.sources_properties["parent_id"] 
-            rec_array['X_CENTER']         = self.sources_properties["centers_of_mass"][0]
-            rec_array['Y_CENTER']         = self.sources_properties["centers_of_mass"][1]
-            rec_array['XWIN_WORLD']       = self.sources_properties["world_coord"][0]
-            rec_array['YWIN_WORLD']       = self.sources_properties["world_coord"][1]
+            rec_array['X_CENTER']         = self.sources_properties["centers_of_mass"][0][0]
+            rec_array['Y_CENTER']         = self.sources_properties["centers_of_mass"][0][1]
+            rec_array['XWIN_WORLD']       = self.sources_properties["world_coord"][0][0]
+            rec_array['YWIN_WORLD']       = self.sources_properties["world_coord"][0][1]
             rec_array['X_MIN']            = self.sources_properties["x_limits"][0][0]
             rec_array['X_MAX']            = self.sources_properties["x_limits"][0][1]
             rec_array['Y_MIN']            = self.sources_properties["y_limits"][0][0]

@@ -109,6 +109,13 @@ struct merge_t {
   FLOAT_TYPE density;
 };
 
+typedef enum {
+    MEAN,
+    MEDIAN,
+    GAUSSIAN,
+    SPLINE
+} density_alg_t;
+
 typedef struct Datapoint_info Datapoint_info;
 typedef struct lu_dynamicArray lu_dynamicArray;
 typedef struct Clusters Clusters;
@@ -136,5 +143,5 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
 void Heuristic3(Clusters *cluster, Datapoint_info *particles, FLOAT_TYPE Z,int halo, int num_threads, bool verbose);
 void freeDatapointArray(Datapoint_info* d, size_t n);
 
-Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, int ncols, int r);
+Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, int ncols, int rmax, density_alg_t algorithm, bool use_log, bool use_adaptive_radius, int sigma_gaussian);
 void Delete_adjlist_element(Clusters * c, const idx_t list_idx, const idx_t el);
