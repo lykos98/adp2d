@@ -2357,6 +2357,10 @@ void compute_covs(float_t* image, int* segmentation_map, int* mask,
 {
     #define LOWER_BOUND(x) (2*x) 
     #define UPPER_BOUND(x) (2*x + 1) 
+
+    float_t* rew_com  = calloc(2 * nclusters, sizeof(float_t));
+    float_t* rew_norm = calloc(nclusters, sizeof(float_t));
+
     // initialization
     #pragma omp parallel for
     for(int i = 0; i < nclusters; ++i)
@@ -2385,6 +2389,8 @@ void compute_covs(float_t* image, int* segmentation_map, int* mask,
     #pragma omp parallel
     {
         float_t* pvt_centers_of_mass = (float_t*)calloc(2 * nclusters, sizeof(float_t));
+        float_t* pvt_rew_com         = (float_t*)calloc(2 * nclusters, sizeof(float_t));
+        float_t* pvt_rew_norm        = (float_t*)calloc(nclusters, sizeof(float_t));   
         float_t* pvt_cov_matrices    = (float_t*)calloc(4 * nclusters, sizeof(float_t));
         float_t* pvt_flux            = (float_t*)calloc(nclusters, sizeof(float_t));
         float_t* pvt_r_max           = (float_t*)calloc(nclusters, sizeof(float_t));
@@ -2423,7 +2429,7 @@ void compute_covs(float_t* image, int* segmentation_map, int* mask,
                     // if(parent_id[lab] == -1) parent_id[lab] = mask[yy*ncols + xx];
                     
                     int det_id = mask[yy*ncols + xx];
-                    if (det_id != -1 && pvt_parent_id[lab] == -1) {
+                    if (det_id > 0 && pvt_parent_id[lab] == -1) {
                         pvt_parent_id[lab] = det_id;
                     }
 
@@ -2504,6 +2510,58 @@ void compute_covs(float_t* image, int* segmentation_map, int* mask,
             centers_of_mass[2*i + 1] = centers_of_mass[2*i + 1]/flux[i];
         }
 
+        #pragma omp for
+        for(int yy = 0; yy < nrows; ++yy)
+            for(int xx = 0; xx < ncols; ++xx)
+            {
+                int lab = segmentation_map[yy*ncols + xx];
+
+                if(lab != -1)
+                {
+                    float_t pix_flux = image[yy*ncols + xx];
+                    if(pix_flux < 0) pix_flux = fabs(pix_flux);
+
+                    float_t dx = (float_t)xx - centers_of_mass[2*lab];
+                    float_t dy = (float_t)yy - centers_of_mass[2*lab + 1];
+
+                    float_t d = sqrt(dx*dx + dy*dy);
+                    if(d == 0.0)
+                        d = 1.0;
+
+                    float_t w_tot = pix_flux / d;
+
+                    pvt_rew_com[2*lab]     += (float_t)xx * w_tot;
+                    pvt_rew_com[2*lab + 1] += (float_t)yy * w_tot;
+                    pvt_rew_norm[lab]      += w_tot;
+                }
+            }
+
+        #pragma omp critical (merging_reweighted_com)
+        {
+            for(int lab = 0; lab < nclusters; ++lab)
+            {
+                rew_com[2*lab]     += pvt_rew_com[2*lab];
+                rew_com[2*lab + 1] += pvt_rew_com[2*lab + 1];
+
+                rew_norm[lab]      += pvt_rew_norm[lab];
+            }
+        }
+
+        #pragma omp barrier
+
+        #pragma omp single
+        {
+            for(int lab = 0; lab < nclusters; ++lab)
+            {
+                if(rew_norm[lab] > 0.0)
+                {
+                    centers_of_mass[2*lab]     = rew_com[2*lab]     / rew_norm[lab];
+                    centers_of_mass[2*lab + 1] = rew_com[2*lab + 1] / rew_norm[lab];
+                }
+            }
+        }
+
+        #pragma omp barrier
 
         #pragma omp for
         for(int yy = 0; yy < nrows; ++yy)
@@ -2569,6 +2627,8 @@ void compute_covs(float_t* image, int* segmentation_map, int* mask,
         }
  
         free(pvt_centers_of_mass);
+        free(pvt_rew_com);
+        free(pvt_rew_norm);
         free(pvt_cov_matrices);
         free(pvt_flux);
         free(pvt_x_limits);
@@ -2578,6 +2638,9 @@ void compute_covs(float_t* image, int* segmentation_map, int* mask,
         free(pvt_r_max);
     }
 
+    free(rew_com);
+    free(rew_norm);
+    
     #undef LOWER_BOUND
     #undef UPPER_BOUND
 }
