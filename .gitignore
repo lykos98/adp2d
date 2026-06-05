@@ -1,5 +1,6 @@
 #*.ipynb
 
+
 *.npy.*
 **runs/*
 l
@@ -23,4 +24,5 @@ example.sh
 bb.txt
 src/clustering\ copy.c
 test
+tests
 sync.sh

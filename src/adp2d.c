@@ -2344,6 +2344,7 @@ void tiny_colorize(
 #undef GREEN
 #undef RED
 
+/*
 void compute_covs(float_t* image, int* segmentation_map, int* mask, 
                   int nrows, int ncols, int nclusters, 
                   float_t* centers_of_mass, 
@@ -2644,6 +2645,7 @@ void compute_covs(float_t* image, int* segmentation_map, int* mask,
     #undef LOWER_BOUND
     #undef UPPER_BOUND
 }
+*/
 
 
 // FIX: to check
@@ -2735,5 +2737,366 @@ void compute_eigensystems(float_t* cov_matrices, float_t* lambdas, float_t* vs, 
 void export_cluster_assignment(Datapoint_info* points, int* labels, idx_t n)
 {
 	for(idx_t i = 0; i < n; ++i) labels[i] = points[i].cluster_idx;
+}
+
+void compute_covs(float_t* image, int* segmentation_map, int* mask, 
+                   int nrows, int ncols, int nclusters, 
+                   float_t* centers_of_mass, 
+                   float_t* cov_matrices, 
+                   float_t* flux,
+                   int* areas,
+                   float_t* rmax,
+                   int* parent_id,
+                   int* x_limits,
+                   int* y_limits)
+{
+    #define LOWER_BOUND(x) (2*x) 
+    #define UPPER_BOUND(x) (2*x + 1) 
+
+    // Initialize outputs
+    #pragma omp parallel for
+    for(int i = 0; i < nclusters; ++i)
+    {
+        centers_of_mass[2*i]     = 0.0;
+        centers_of_mass[2*i + 1] = 0.0;
+
+        cov_matrices[4*i]     = 0.0;
+        cov_matrices[4*i + 1] = 0.0;
+        cov_matrices[4*i + 2] = 0.0;
+        cov_matrices[4*i + 3] = 0.0;
+
+        parent_id[i]    = -1;
+
+        x_limits[LOWER_BOUND(i)] = ncols; 
+        x_limits[UPPER_BOUND(i)] = 0;
+
+        y_limits[LOWER_BOUND(i)] = nrows; 
+        y_limits[UPPER_BOUND(i)] = 0;
+
+        flux[i]    = 0.0;
+        areas[i]   = 0;
+        rmax[i]    = 0.0;
+    }
+    
+    // Global accumulators for COM sum (to be reduced across threads)
+    // These are shared by all threads
+    float_t* com_sum_x = (float_t*)calloc(nclusters, sizeof(float_t));
+    float_t* com_sum_y = (float_t*)calloc(nclusters, sizeof(float_t));
+    
+    // Thread-local total flux for each cluster (absolute, from Pass 1)
+    float_t* global_flux = (float_t*)calloc(nclusters, sizeof(float_t));
+    // sum of squared absolute flux for each cluster (sum(w^2)) for np.cov-style normalization
+    float_t* global_flux2 = (float_t*)calloc(nclusters, sizeof(float_t));
+
+    // Shared accumulators for reweighted COM (pass 2)
+    float_t* rew_sum_x = (float_t*)calloc(nclusters, sizeof(float_t));
+    float_t* rew_sum_y = (float_t*)calloc(nclusters, sizeof(float_t));
+    float_t* rew_norm  = (float_t*)calloc(nclusters, sizeof(float_t));
+
+    // Shared flux-weighted COM (COM_std) arrays — must be shared so all threads see the same values
+    float_t* com_std_x = (float_t*)calloc(nclusters, sizeof(float_t));
+    float_t* com_std_y = (float_t*)calloc(nclusters, sizeof(float_t));
+
+    #pragma omp parallel
+    {
+        // Thread-local accumulators for Pass 1 (standard COM - flux-weighted)
+        float_t* pvt_com_sum_x = (float_t*)calloc(nclusters, sizeof(float_t));
+        float_t* pvt_com_sum_y = (float_t*)calloc(nclusters, sizeof(float_t));
+        float_t* pvt_flux      = (float_t*)calloc(nclusters, sizeof(float_t));
+        float_t* pvt_flux2     = (float_t*)calloc(nclusters, sizeof(float_t));
+        
+        // Thread-local accumulators for Pass 2 (reweighted COM - flux/d)
+        // Using separate accumulators for thread-local processing
+        float_t* pvt_rew_sum_x = (float_t*)calloc(nclusters, sizeof(float_t));
+        float_t* pvt_rew_sum_y = (float_t*)calloc(nclusters, sizeof(float_t));
+        float_t* pvt_rew_norm  = (float_t*)calloc(nclusters, sizeof(float_t));
+        
+        // Thread-local accumulators for Pass 3 (covariance with COM_std as origin)
+        float_t* pvt_cov       = (float_t*)calloc(4 * nclusters, sizeof(float_t));
+        float_t* pvt_r_max     = (float_t*)calloc(nclusters, sizeof(float_t));
+        
+        int* pvt_areas         = (int*)calloc(nclusters, sizeof(int));
+        int* pvt_x_limits      = (int*)calloc(2 * nclusters, sizeof(int));
+        int* pvt_y_limits      = (int*)calloc(2 * nclusters, sizeof(int));
+        int* pvt_parent_id     = (int*)malloc(nclusters * sizeof(int));
+
+        for(int i = 0; i < nclusters; ++i)
+        {
+            pvt_x_limits[LOWER_BOUND(i)] = ncols; 
+            pvt_x_limits[UPPER_BOUND(i)] = 0;
+            pvt_y_limits[LOWER_BOUND(i)] = nrows; 
+            pvt_y_limits[UPPER_BOUND(i)] = 0;
+            pvt_parent_id[i] = -1;
+        }
+
+        // ===== PASS 1: Compute standard COM and total flux =====
+        // Uses ABSOLUTE pix_flux as weights
+        // Store COM_std in thread-local array for later use in Pass 2 and 3
+        #pragma omp for
+        for(int yy = 0; yy < nrows; ++yy) {
+            for(int xx = 0; xx < ncols; ++xx) {
+                int lab = segmentation_map[yy*ncols + xx]; 
+                if (lab != -1)
+                {   
+                    float_t pix_flux = image[yy*ncols + xx];
+                    if (pix_flux < 0) pix_flux = -pix_flux;  // Use absolute value
+                    
+                    pvt_com_sum_x[lab] += (float_t)xx * pix_flux;  // cols
+                    pvt_com_sum_y[lab] += (float_t)yy * pix_flux;  // rows
+                    pvt_flux[lab]       += pix_flux;
+                    pvt_flux2[lab]      += pix_flux * pix_flux;
+                    
+                    pvt_areas[lab] += 1;
+
+                    int det_id = mask[yy*ncols + xx];
+                    if (det_id > 0 && pvt_parent_id[lab] == -1) {
+                        pvt_parent_id[lab] = det_id;
+                    }
+
+                    pvt_x_limits[LOWER_BOUND(lab)] = MIN(xx, pvt_x_limits[LOWER_BOUND(lab)]);
+                    pvt_x_limits[UPPER_BOUND(lab)] = MAX(xx, pvt_x_limits[UPPER_BOUND(lab)]);
+
+                    pvt_y_limits[LOWER_BOUND(lab)] = MIN(yy, pvt_y_limits[LOWER_BOUND(lab)]);
+                    pvt_y_limits[UPPER_BOUND(lab)] = MAX(yy, pvt_y_limits[UPPER_BOUND(lab)]);
+                }
+            }
+        }
+
+        // Reduction: merge thread-local values to global (flux, areas, etc.)
+        #pragma omp critical (merging_coms)
+        {
+            for(int i = 0; i < nclusters; ++i)
+            {
+                global_flux2[i] += pvt_flux2[i];
+                flux[i]    += pvt_flux[i];
+                global_flux[i] += pvt_flux[i];  // Store absolute flux for Pass 2 & 3
+                areas[i]   += pvt_areas[i];
+                
+                // Reduce thread-local COM sum to global
+                com_sum_x[i] += pvt_com_sum_x[i];
+                com_sum_y[i] += pvt_com_sum_y[i];
+
+                x_limits[LOWER_BOUND(i)] = MIN(x_limits[LOWER_BOUND(i)], pvt_x_limits[LOWER_BOUND(i)]);
+                x_limits[UPPER_BOUND(i)] = MAX(x_limits[UPPER_BOUND(i)], pvt_x_limits[UPPER_BOUND(i)]);
+
+                y_limits[LOWER_BOUND(i)] = MIN(y_limits[LOWER_BOUND(i)], pvt_y_limits[LOWER_BOUND(i)]);
+                y_limits[UPPER_BOUND(i)] = MAX(y_limits[UPPER_BOUND(i)], pvt_y_limits[UPPER_BOUND(i)]);
+
+                if (parent_id[i] == -1 && pvt_parent_id[i] != -1) {
+                    parent_id[i] = pvt_parent_id[i];
+                }
+            }
+        }
+
+        #pragma omp barrier
+
+        #pragma omp single
+        {
+            int max_det_id = -1;
+            for (int lab = 0; lab < nclusters; ++lab) {
+                if (parent_id[lab] > max_det_id) max_det_id = parent_id[lab];
+            }
+
+            int* det_child_count = (int*)calloc(max_det_id + 1, sizeof(int));
+
+            for (int lab = 0; lab < nclusters; ++lab) {
+                int det_id = parent_id[lab];
+                if (det_id != -1) {
+                    det_child_count[det_id] += 1;
+                }
+            }
+
+            for (int lab = 0; lab < nclusters; ++lab) {
+                int det_id = parent_id[lab];
+                if (det_id == -1) continue;
+
+                if (det_child_count[det_id] <= 1)
+                    parent_id[lab] = -1;
+                else
+                    parent_id[lab] = det_id;
+            }
+
+            free(det_child_count);
+        }
+
+        #pragma omp barrier
+
+        // ===== PASS 2: Compute reweighted COM using w' = pix_flux / d =====
+        // Compute COM_std first (flux-weighted COM) into SHARED arrays
+        #pragma omp single
+        for(int i = 0; i < nclusters; ++i)
+        {
+            if (global_flux[i] > 0.0) {
+                com_std_x[i] = com_sum_x[i] / global_flux[i];  // COM_std_x (using global sum)
+                com_std_y[i] = com_sum_y[i] / global_flux[i];  // COM_std_y (using global sum)
+            } else {
+                com_std_x[i] = 0.0;
+                com_std_y[i] = 0.0;
+            }
+        }
+        
+        #pragma omp barrier
+
+        // Clear accumulators for reweighted COM
+        #pragma omp for
+        for(int lab = 0; lab < nclusters; ++lab)
+        {
+            pvt_rew_sum_x[lab] = 0.0;
+            pvt_rew_sum_y[lab] = 0.0;
+            pvt_rew_norm[lab]  = 0.0;
+        }
+
+        #pragma omp barrier
+
+        // Compute reweighted COM
+        #pragma omp for
+        for(int yy = 0; yy < nrows; ++yy) {
+            for(int xx = 0; xx < ncols; ++xx) {
+                int lab = segmentation_map[yy*ncols + xx]; 
+                if (lab != -1)
+                {
+                    float_t pix_flux = image[yy*ncols + xx];
+                    if (pix_flux < 0) pix_flux = -pix_flux;  // Use absolute value
+
+                    // Distance from COM_std (flux-weighted COM, shared array)
+                    float_t dx = (float_t)xx - com_std_x[lab];  // cols offset
+                    float_t dy = (float_t)yy - com_std_y[lab];  // rows offset
+                    float_t d = sqrt(dx*dx + dy*dy);
+                    
+                    // Handle d=0 to avoid division by zero
+                    if (d == 0.0) d = 1.0;
+
+                    // Reweighted: w' = pix_flux / d
+                    float_t w_tot = pix_flux / d;
+
+                    pvt_rew_sum_x[lab] += (float_t)xx * w_tot;  // cols
+                    pvt_rew_sum_y[lab] += (float_t)yy * w_tot;  // rows
+                    pvt_rew_norm[lab]  += w_tot;
+                }
+            }
+        }
+
+        // Reduction: merge to global for reweighted COM
+        #pragma omp critical (merging_reweighted)
+        {
+            for(int lab = 0; lab < nclusters; ++lab)
+            {
+                rew_sum_x[lab] += pvt_rew_sum_x[lab];
+                rew_sum_y[lab] += pvt_rew_sum_y[lab];
+                rew_norm[lab]  += pvt_rew_norm[lab];
+            }
+        }
+
+        #pragma omp barrier
+
+        // Store COM_final (reweighted) in centers_of_mass
+        #pragma omp for
+        for(int i = 0; i < nclusters; ++i)
+        {
+            if (rew_norm[i] > 0.0) {
+                centers_of_mass[2*i]     = rew_sum_x[i] / rew_norm[i];
+                centers_of_mass[2*i + 1] = rew_sum_y[i] / rew_norm[i];
+            } else {
+                centers_of_mass[2*i]     = 0.0;
+                centers_of_mass[2*i + 1] = 0.0;
+            }
+        }
+
+        #pragma omp barrier
+
+        // ===== PASS 3: Compute covariance using flux-weighted COM (COM_std) as origin =====
+        // Uses original pix_flux weights (absolute values from Pass 1)
+        // This matches np.cov(aweights=flux) which centers at the flux-weighted mean.
+        #pragma omp for
+        for(int yy = 0; yy < nrows; ++yy) {
+            for(int xx = 0; xx < ncols; ++xx) {
+                int lab = segmentation_map[yy*ncols + xx]; 
+                if(lab != -1)
+                {
+                    // Use flux-weighted COM (COM_std) as origin, matching np.cov(aweights=flux)
+                    float_t x_n = (float_t)xx - com_std_x[lab];  // cols
+                    float_t y_n = (float_t)yy - com_std_y[lab];  // rows
+
+                    float_t pix_flux = image[yy*ncols + xx];
+                    if (pix_flux < 0) pix_flux = -pix_flux;  // Use absolute value
+                    
+                    float_t r = sqrt(x_n * x_n + y_n * y_n);
+                    if (r > pvt_r_max[lab]) pvt_r_max[lab] = r;
+                    
+                    // Covariance with COM_std as origin, using ORIGINAL pix_flux weights
+                    pvt_cov[4*lab    ] += x_n * x_n * pix_flux;
+                    pvt_cov[4*lab + 1] += x_n * y_n * pix_flux;
+                    pvt_cov[4*lab + 2] += x_n * y_n * pix_flux;
+                    pvt_cov[4*lab + 3] += y_n * y_n * pix_flux;
+                }
+            }
+        }
+
+        // Reduction for covariance
+        #pragma omp critical (merging_cov)
+        {
+            for(int lab = 0; lab < nclusters; ++lab)
+            {
+                cov_matrices[4*lab    ] += pvt_cov[4*lab    ];
+                cov_matrices[4*lab + 1] += pvt_cov[4*lab + 1];
+                cov_matrices[4*lab + 2] += pvt_cov[4*lab + 2];
+                cov_matrices[4*lab + 3] += pvt_cov[4*lab + 3];
+
+                x_limits[2*lab    ] = MIN(pvt_x_limits[2*lab    ], x_limits[2*lab    ]);
+                x_limits[2*lab + 1] = MAX(pvt_x_limits[2*lab + 1], x_limits[2*lab + 1]);
+                y_limits[2*lab    ] = MIN(pvt_y_limits[2*lab    ], y_limits[2*lab    ]);
+                y_limits[2*lab + 1] = MAX(pvt_y_limits[2*lab + 1], y_limits[2*lab + 1]);
+                rmax[lab]           = MAX(rmax[lab], pvt_r_max[lab]);
+            }
+        }
+
+        #pragma omp barrier
+
+        // Normalize covariance matching np.cov(aweights=flux):
+        // denominator = sum(w) - sum(w^2)/sum(w)  (bias=True, effective ddof)
+        #pragma omp for
+        for(int lab = 0; lab < nclusters; ++lab)
+        {
+            if (flux[lab] > 0.0) {
+                float_t w_sum  = flux[lab];
+                float_t w_sum2 = global_flux2[lab];
+                float_t denom  = w_sum - w_sum2 / w_sum;
+                if (denom > 0.0) {
+                    cov_matrices[4*lab    ] = cov_matrices[4*lab    ] / denom;
+                    cov_matrices[4*lab + 1] = cov_matrices[4*lab + 1] / denom;
+                    cov_matrices[4*lab + 2] = cov_matrices[4*lab + 2] / denom;
+                    cov_matrices[4*lab + 3] = cov_matrices[4*lab + 3] / denom;
+                }
+            }
+        }
+    
+       free(pvt_com_sum_x);
+       free(pvt_com_sum_y);
+       free(pvt_flux);
+       free(pvt_flux2);
+       free(pvt_rew_sum_x);
+       free(pvt_rew_sum_y);
+       free(pvt_rew_norm);
+       free(pvt_cov);
+       free(pvt_r_max);
+       free(pvt_x_limits);
+       free(pvt_y_limits);
+       free(pvt_areas);
+       free(pvt_parent_id);
+   }
+   
+   // Free global COM sum accumulators after parallel region
+   free(com_sum_x);
+   free(com_sum_y);
+   free(global_flux);
+   free(global_flux2);
+   free(rew_sum_x);
+   free(rew_sum_y);
+   free(rew_norm);
+   free(com_std_x);
+   free(com_std_y);
+
+    #undef LOWER_BOUND
+    #undef UPPER_BOUND
 }
 

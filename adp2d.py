@@ -294,7 +294,7 @@ class Data():
         #                   int* x_limits,
         #                   int* y_limits)
         
-        self.__compute_covs = self.lib.compute_covs
+        self.__compute_covs = self.lib.compute_covs_numpy
         self.__compute_covs.argtypes = [np.ctypeslib.ndpointer(ct.c_double),
                                         np.ctypeslib.ndpointer(ct.c_int32),
                                         np.ctypeslib.ndpointer(ct.c_int32),
@@ -329,6 +329,13 @@ class Data():
                                      ct.c_uint32,
                                      ct.c_uint32,]
 
+        self._export_density = self.lib.export_density
+        self._export_density.argtypes = [
+            ct.POINTER(DatapointInfo),
+            np.ctypeslib.ndpointer(ctFloatType),
+            np.ctypeslib.ndpointer(ctFloatType),
+            ct.c_uint64,
+        ]
 
         if len(self.data.shape) != 2:
             raise TypeError("Please provide a 2d numpy array")
@@ -422,17 +429,13 @@ class Data():
             List of cluster labels
             
         """
-        #if self.clusterAssignment is None:
-        #    if self.state["clustering"]:
-        #        self.clusterAssignment = np.array([int(self.__datapoints[j].cluster_idx) for j in range(self.n)])
-        #        return self.clusterAssignment
-        #    else:
-        #        raise ValueError("Clustering is not computed yet")
-        #else:
-        #    return self.clusterAssignment
-        self.clusterAssignment = np.ascontiguousarray(np.zeros((self.nrows, self.ncols), np.int32))
-        self._export_cluster_assignment(self.__datapoints, self.clusterAssignment, self.n)
-        #self.clusterAssignment = np.array([int(self.__datapoints[j].cluster_idx) for j in range(self.n)], dtype = np.int32)
+        if self.clusterAssignment is None:
+            if self.state["clustering"]:
+                self.clusterAssignment = np.ascontiguousarray(np.zeros((self.nrows, self.ncols), np.int32))
+                self._export_cluster_assignment(self.__datapoints, self.clusterAssignment, self.n)
+                return self.clusterAssignment
+            else:
+                raise ValueError("Clustering is not computed yet")
         return self.clusterAssignment
 
     def getBorders(self):
@@ -451,7 +454,9 @@ class Data():
         """
         if self.density is None:
             if self.state["density"]:
-                self.density = np.array([float(self.__datapoints[j].log_rho) for j in range(self.n)])
+                self.density = np.ascontiguousarray(np.zeros(self.n, dtype=ctFloatType))
+                self.densityError = np.ascontiguousarray(np.zeros(self.n, dtype=ctFloatType))
+                self._export_density(self.__datapoints, self.density, self.densityError, self.n)
                 return self.density
             else:
                 raise ValueError("Density is not computed yet")
@@ -581,7 +586,7 @@ class Data():
         segmentation_map = self.clusterAssignment.reshape((self.nrows, self.ncols)).astype(np.int32)
 
         nrows, ncols = self.data.shape
-        nlabs = self.__clusters.centers.count
+        nlabs = len(np.unique(segmentation_map)) -1 if self.__clusters is None else self.__clusters.centers.count
 
         coms                = np.zeros((nlabs,2), dtype = np.float64)
         ra_dec              = np.zeros((nlabs, 2), dtype=np.float64)

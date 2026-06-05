@@ -145,3 +145,25 @@ void freeDatapointArray(Datapoint_info* d, size_t n);
 
 Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, int ncols, int rmax, density_alg_t algorithm, bool use_log, bool use_adaptive_radius, int sigma_gaussian);
 void Delete_adjlist_element(Clusters * c, const idx_t list_idx, const idx_t el);
+
+void compute_covs(float_t* image, int* segmentation_map, int* mask, 
+                  int nrows, int ncols, int nclusters, 
+                  float_t* centers_of_mass, 
+                  float_t* cov_matrices, 
+                  float_t* flux,
+                  int* areas,
+                  float_t* rmax,
+                  int* parent_id,
+                  int* x_limits,
+                  int* y_limits);
+
+void compute_covs_numpy(float_t* image, int* segmentation_map, int* mask, 
+                        int nrows, int ncols, int nclusters, 
+                        float_t* centers_of_mass, 
+                        float_t* cov_matrices, 
+                        float_t* flux,
+                        int* areas,
+                        float_t* rmax,
+                        int* parent_id,
+                        int* x_limits,
+                        int* y_limits);
