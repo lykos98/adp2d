@@ -26,3 +26,4 @@ src/clustering\ copy.c
 test
 tests
 sync.sh
+*_old*
