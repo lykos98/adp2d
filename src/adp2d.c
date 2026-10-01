@@ -1,4 +1,3 @@
-//include "../include/read_fof_snapshot.h"
 #include "../include/adp2d.h"
 #include <float.h>
 #include <math.h>
@@ -7,11 +6,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-
-/*
-#define STB_IMAGE_IMPLEMENTATION
-#include "../include/stb_image.h"
-*/
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "../include/stb_image_write.h"
@@ -30,6 +24,23 @@ unsigned int data_dims;
 idx_t Npart;
 const border_t border_null = {.density = -1.0, .error = 0, .idx = NOBORDER};
 const SparseBorder_t SparseBorder_null = {.density = -1.0, .error = 0, .idx = NOBORDER, .i = NOBORDER, .j = NOBORDER};
+
+/**************************************
+ * Border selection for iterative run *
+***************************************/
+int   ADP_BORDER_STAT = 0;      // 0 = max-g, 3 = percentile
+float ADP_BORDER_PERC = 0.8f;   // percentile for mode 3
+
+typedef struct { idx_t key; idx_t idx; float_t g; } bpair_t;
+static int bpair_cmp(const void *A, const void *B)
+{
+    const bpair_t *a = (const bpair_t*)A, *b = (const bpair_t*)B;
+    if(a->key != b->key) return (a->key < b->key) ? -1 : 1;
+    return (a->g < b->g) ? -1 : (a->g > b->g) ? 1 : 0;
+}
+
+void set_adp_border(int stat, float perc) { ADP_BORDER_STAT = stat; ADP_BORDER_PERC = perc; }
+
 
 /*****************************
  * Clusters object functions *
@@ -52,7 +63,7 @@ void Clusters_allocate(Clusters * c, int s)
     
     if(s)
     {
-	    //printf("Using sparse implementation\n");
+	    // Using sparse implementation
 	    c -> UseSparseBorders = 1;
 	    c -> SparseBorders = (AdjList_t*)malloc(nclus*sizeof(AdjList_t));
 	    for(idx_t i = 0; i < nclus; ++i)
@@ -65,7 +76,7 @@ void Clusters_allocate(Clusters * c, int s)
     }
     else
     {
-	    //printf("Using dense implementation\n");
+	    // Using dense implementation
 	    c -> UseSparseBorders = 0;
 	    c -> __borders_data         = (border_t*)malloc(nclus*nclus*sizeof(border_t)); 
 	    c -> borders                = (border_t**)malloc(nclus*sizeof(border_t*));
@@ -132,7 +143,6 @@ void Clusters_free(Clusters * c)
     Clusters_Reset(c);
 }
 
-
 void SparseBorder_Insert(Clusters *c, SparseBorder_t b)
 {
 	idx_t i = b.i;
@@ -188,7 +198,8 @@ void DynamicArray_pushBack(lu_dynamicArray * a, idx_t p)
         a -> data[a -> count] =  p;
         a -> count += 1;
     }
-    else{
+    else
+    {
         a -> size += ARRAY_INCREMENT;
         a -> data = realloc(a -> data, a -> size * sizeof(idx_t));
         a -> data[a -> count] =  p;
@@ -213,19 +224,14 @@ void DynamicArray_Init(lu_dynamicArray * a)
     a -> size = 0;
 }
 
-
 /*******************
  * Clustering part *
  *******************/
-
-
 int cmp(const void * a, const void * b){
     float_t aa = *((float_t*)a);
     float_t bb = *((float_t*)b);
     return (aa > bb ) - (aa < bb); 
 }
-
-
 
 float_t avg(const float_t * x, const idx_t n)
 {
@@ -259,7 +265,6 @@ void computeCorrection(Datapoint_info* dpInfo, int* mask, idx_t n, float_t Z)
      *****************************************************************************/
     float_t min_log_rho = FLT_MAX;
     
-
     #pragma omp parallel
     {
         float_t thread_min_log_rho = FLT_MAX;
@@ -282,7 +287,6 @@ void computeCorrection(Datapoint_info* dpInfo, int* mask, idx_t n, float_t Z)
             dpInfo[i].g = dpInfo[i].log_rho_c - dpInfo[i].log_rho_err;
         }
     }
-    //printf("%lf\n",min_log_rho);
 }
 
 typedef struct {
@@ -306,7 +310,6 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
     computeCorrection(dpInfo, mask, nrows * ncols, Z);
 
     // then see if I can split the compute per thread
-    //
     int aa = 0;
     for(int i = 0; i < nrows * ncols; ++i)
     {
@@ -390,8 +393,6 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 
         }
 
-        // avoid 0
-
         printf("Computing clustering\n");
         int* clusters_per_box = (int*)calloc(n_labels_mask, sizeof(int));
 
@@ -415,8 +416,6 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 
             if(box_is_valid)
             {
-                // printf("Processing box row [%d %d] col [%d %d]\n",  box.lb_row, box.ub_row, 
-                //                                                     box.lb_col, box.ub_col);
                 int ncols_box = (box.ub_col - box.lb_col) + 1;
                 int nrows_box = (box.ub_row - box.lb_row) + 1;
                 int n_pixels_in_box =  nrows_box * ncols_box;
@@ -445,7 +444,6 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
                 Heuristic2(&c_tmp, tmp_dp, tmp_mask, nrows_box, ncols_box, 1, false);
                 Heuristic3(&c_tmp, tmp_dp, Z, halo, 1, false);
 
-                // if(c_tmp.n > 1000) printf("c_tmp.n %lu\n", c_tmp.n);
                 clusters_per_box[lab] = c_tmp.centers.count;
 
                 //copy cluster assignment
@@ -466,8 +464,8 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         // compute correct cluster indices
 
         int n_clusters = 0;
+        
         // exclusive prefix sum
-        //
         for(int i = 0; i < n_labels_mask; ++i)
         {
             int tmp_n = clusters_per_box[i];
@@ -478,8 +476,8 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         #pragma omp parallel for
         for(idx_t i = 0; i < nrows * ncols; ++i)
         {
-             int lab = mask[i];
-             dpInfo[i].cluster_idx += clusters_per_box[lab];
+            int lab = mask[i];
+            dpInfo[i].cluster_idx += clusters_per_box[lab];
         }
         
         printf("Final n clusters %d\n", n_clusters);
@@ -497,7 +495,6 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
     }
 
     // filter out clusters less than min size
-
     int* pixel_count_per_cluster = (int*)calloc(c.centers.count, sizeof(int));
     int* new_labels              = (int*)calloc(c.centers.count, sizeof(int));
 
@@ -546,7 +543,6 @@ Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 }
 
 
-//Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, int nrows, int ncols)- 
 Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int num_threads, bool verbose)
 {
     /**************************************************************
@@ -578,7 +574,6 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
     struct timespec start, finish;
     double elapsed;
 
-
     if(verbose) clock_gettime(CLOCK_MONOTONIC, &start);
 
     #pragma omp parallel for num_threads(num_threads)
@@ -586,19 +581,15 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
     for(int j = 0; j < (int)ncols; ++j)
     {   
         /*
-
         Find the centers of the clusters as the points of higher density in their neighborhoods
         A point is tagged as a putative center if it is the point of higer density of its neighborhood 
-        
         */
 
         dpInfo_ptrs[i*ncols + j] = dpInfo + i*ncols + j;
         int r = (int)dpInfo[i*ncols + j].kstar;
-        //int r = 50; 
         float_t gi = dpInfo[i*ncols + j].g;
         dpInfo[i*ncols + j].is_center = mask[i*ncols + j] ? 1 : 0;
         dpInfo[i*ncols + j].cluster_idx = -1;
-        //printf("%lf\n",p -> g);
 		int jjmin = j - r > 0 			    ? j - r : 0;  
 		int jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
 
@@ -628,7 +619,6 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
             }
         }
 
-
     if(verbose)
     {
         clock_gettime(CLOCK_MONOTONIC, &finish);
@@ -636,7 +626,6 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
         printf("\tFinding putative centers: %.3lfs\n",elapsed);
         clock_gettime(CLOCK_MONOTONIC, &start);
-
     }
 
 	qsort(dpInfo_ptrs, nrows*ncols, sizeof(Datapoint_info*), cmpPP);
@@ -647,7 +636,6 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 	idx_t* to_remove_mask = (idx_t*)malloc(nrows*ncols*sizeof(idx_t));
     for(idx_t p = 0; p < nrows*ncols; ++p) {to_remove_mask[p] = MY_SIZE_MAX;}
 
-	
     #pragma omp parallel shared(to_remove_mask) num_threads(num_threads)
     {
         #pragma omp for
@@ -656,7 +644,7 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         	Datapoint_info pp = *(dpInfo_ptrs[p]);
 			int i = (int)pp.array_idx / (int)ncols;
 			int j = (int)pp.array_idx % (int)ncols;
-			int r = (int)pp.kstar; //ATTENTION
+			int r = (int)pp.kstar;
 
 			int jjmin = j - r > 0 				? j - r : 0;  
 			int jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
@@ -674,8 +662,6 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 					idx_t jidx = ii*ncols + jj;
 					if(dpInfo[jidx].is_center && pp.g > dpInfo[jidx].g && mask[jidx])
 					{
-						
-                        // this critical makes jupyter crash ostia
 						#pragma omp critical 
 						{
 							ppp = to_remove_mask[jidx];
@@ -695,17 +681,14 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 		}
 	}
     
-    
-
     for(idx_t p = 0; p < allCenters.count; ++p)
     {
         idx_t i = allCenters.data[p];
         int e = 0;
-        //float_t gi = dpInfo[i].g;
+       
         idx_t mr = to_remove_mask[i];
         if(mr != MY_SIZE_MAX)
         {
-            //if(dpInfo[mr].g > gi) e = 1;
 			e = 1;
         }
         switch (e)
@@ -740,7 +723,6 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 	free(to_remove);
 	free(to_remove_mask);
 
-
     if(verbose)
     {
         clock_gettime(CLOCK_MONOTONIC, &finish);
@@ -749,42 +731,20 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         printf("\tFinding actual centers:   %.3lfs\n",elapsed);
         clock_gettime(CLOCK_MONOTONIC, &start);
     }
-
-
-    //idx_t nclusters = 0;
-
-
-    /*****************************************************************************
-     * Sort all the dpInfo based on g and then perform the cluster assignment *
-     * in asceding order                                                         *
-     * UPDATE: dpInfo already sorted                                          *
-     *****************************************************************************/
-                                                                                
-
-    //qsort(dpInfo_ptrs, n, sizeof(Datapoint_info*), cmpPP);
-	
 	
 	idx_t* fromWho = (idx_t*)malloc(nrows*ncols*sizeof(idx_t));
     for(idx_t pidx = 0; pidx < nrows*ncols; ++pidx) fromWho[pidx] = SIZE_MAX;
 
-	
-	
-	
 	#pragma omp parallel for schedule(dynamic) num_threads(num_threads)
     for(idx_t pidx = 0; pidx < nrows*ncols; ++pidx)
     {   
         Datapoint_info* p = dpInfo_ptrs[pidx];
 		int i = (int)(p -> array_idx) / (int)ncols;
 		int j = (int)(p -> array_idx) % (int)ncols;
-		int r = p -> kstar ; //ATTENTION
-		//int r = 5; //ATTENTION
+		int r = p -> kstar ;
 		int iimin, iimax, jjmin, jjmax;
-        //idx_t ele = p -> array_idx;
-        //fprintf(f,"%lu\n",ele);
         if(!(p -> is_center) && mask[i*ncols + j])
         {
-            //int cluster = -1;
-            //idx_t k = 0;
             //assign each particle at the same cluster as the nearest particle of higher density
 			jjmin = j - r > 0 			? j - r : 0;  
 			jjmax = j + r + 1 < (int)ncols 	? j + r + 1 : (int)ncols;  
@@ -792,36 +752,26 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 			iimin = i - r > 0 	 		? i - r : 0;  
 			iimax = i + r + 1 < (int)nrows 	? i + r + 1 : (int)nrows;  
 			
-			//int ii_toTakeFrom, jj_toTakeFrom;
 			long int minNgbhDist = nrows*nrows*ncols*ncols;
-			float_t g_current = dpInfo[i*ncols + j].g;
-			int foundFlag = 0;
-			for(int ii = iimin; ii < iimax; ++ii)
+			float_t g_current    = dpInfo[i*ncols + j].g;
+			int foundFlag        = 0;
+			
+            for(int ii = iimin; ii < iimax; ++ii)
 			for(int jj = jjmin; jj < jjmax; ++jj)
 			//Take the same cluster as the nearest neighbor with higher density
 			{
 				//take the ngbh
 				long int currentDist = (ii-i)*(ii-i) + (jj-j)*(jj-j);	
-				int notMySelf = (ii != i) || (jj != j);
-				idx_t ngbhIdx = ii*ncols + jj;
-				float_t g_ngbh = dpInfo[ngbhIdx].g; 
-				//if(ii*ncols + j == 302000)
-				//{
-				//	printf("Nopeh\n");
-				//}
+				int notMySelf        = (ii != i) || (jj != j);
+				idx_t ngbhIdx        = ii*ncols + jj;
+				float_t g_ngbh       = dpInfo[ngbhIdx].g; 
 				if(g_ngbh > g_current && notMySelf && currentDist < minNgbhDist)
 				{
 					minNgbhDist = currentDist;
-					//ii_toTakeFrom = ii;
-					//jj_toTakeFrom = jj;
-					//cluster = dpInfo[p_idx].cluster_idx; 
 					fromWho[i*ncols + j] = (idx_t)(ii*ncols+jj);
 					foundFlag = 1;
 				}
 			}
-
-
-            //
             if(!foundFlag)
             {
                 float_t gmax = -99999.;               
@@ -836,7 +786,6 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
                         float_t gcand = dpInfo[max_rho.data[m]].g;
                         if(ngbh_index == removedCenters.data[m] && gcand > gmax)
                         {   
-                            //printf("%lu -- %lu\n", ele, m);
                             gmax = gcand;
                             gm_index = max_rho.data[m];
 							fromWho[i*ncols + j] = gm_index;
@@ -844,38 +793,28 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
                         }
                     }
                 }
-
-                //cluster = dpInfo[gm_index].cluster_idx;
-
             }
-            //p -> cluster_idx = cluster;
 			if(!foundFlag) mask[i*ncols + j] = 0;
 
 		}
 	}
 
-
-	//printf("aa\n");
-	//#pragma omp parallel for schedule(dynamic)
 	for(int i = 0; i < (int)nrows; ++i)
 	for(int j = 0; j < (int)ncols; ++j)
 	{
 		idx_t pidx = dpInfo_ptrs[i*ncols + j] -> array_idx;
 		if(mask[pidx] && !(dpInfo[pidx].is_center))
 		{
-			idx_t idxToTakeFrom = fromWho[pidx];
-			//int cluster = dpInfo[idxToTakeFrom].cluster_idx;				
-			int cluster = -1;
+			idx_t idxToTakeFrom = fromWho[pidx];			
+			int cluster         = -1;
 			while(cluster == -1)
 			{
-				cluster = dpInfo[idxToTakeFrom].cluster_idx;				
+				cluster       = dpInfo[idxToTakeFrom].cluster_idx;				
 				idxToTakeFrom = fromWho[idxToTakeFrom];
 			}
 			dpInfo[pidx].cluster_idx = cluster;
 		}
 	}
-	
-    
 
     if(verbose)
     {
@@ -884,7 +823,6 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
         printf("\tTentative clustering:     %.3lfs\n",elapsed);
         clock_gettime(CLOCK_MONOTONIC, &start);
-
     }
 
     free(dpInfo_ptrs);
@@ -895,7 +833,6 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
 
     Clusters c_all;
     c_all.centers = actualCenters;
-
 
     if(verbose)
     {
@@ -909,11 +846,9 @@ Clusters Heuristic1(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncol
         elapsed_tot = (finish_tot.tv_sec - start_tot.tv_sec);
         elapsed_tot += (finish_tot.tv_nsec - start_tot.tv_nsec) / 1000000000.0;
 
-
         printf("\tFound %lu clusters\n",(uint64_t)actualCenters.count);
         printf("\tTotal time: %.3lfs\n\n", elapsed_tot);
     }
-
 
     c_all.n = nrows*ncols;
     return c_all;
@@ -926,15 +861,28 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
 
     struct timespec start_tot, finish_tot;
     double elapsed_tot;
-    //idx_t n = cluster -> n;
 
     if(verbose) printf("H2: Finding border points\n");
     clock_gettime(CLOCK_MONOTONIC, &start_tot);
 
-
     idx_t nclus = cluster->centers.count; 
-    //idx_t max_k = dpInfo[0].ngbh.N;
+    
+    // Border selection for Iterative Run
+    float_t* seam_min = NULL;
+    float_t* seam_max = NULL;
+    bpair_t* bpairs   = NULL;
+    idx_t    nb       = 0;
 
+    if (ADP_BORDER_STAT == 3)
+    {
+        if(!cluster->UseSparseBorders)
+        {
+            seam_min = (float_t*)malloc(nclus*nclus*sizeof(float_t));
+            seam_max = (float_t*)malloc(nclus*nclus*sizeof(float_t));
+            bpairs   = (bpair_t*)malloc(nrows*ncols*sizeof(bpair_t)); // ≤1 entry/pixel
+            for(idx_t k = 0; k < nclus*nclus; ++k) { seam_min[k] =  FLT_MAX; seam_max[k] = -FLT_MAX; }
+        }
+    }
 
     for(int i = 0; i < (int)nrows; i++)
     for(int j = 0; j < (int)ncols; j++)
@@ -958,6 +906,7 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
                     /*index of the kth ngbh of n*/
                     idx_t jidx = ii*ncols + jj;
 					long int currentNgbhDist = (ii-i)*(ii-i) + (jj - j)*(jj - j);
+                    
                     /*Loop over kn neigbhours to find if n is the nearest*/
                     /*if cluster of the particle in nbhg is c then check is neighborhood*/                                                
                     if(dpInfo[jidx].cluster_idx != -1 
@@ -991,7 +940,8 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
                 {
 					idx_t pp_ngbh_idx = ii*ncols + jj;
 					long int currentNgbhDist = (ii-i)*(ii-i) + (jj - j)*(jj - j);
-					//find if the nearest is the starting point
+					
+                    //find if the nearest is the starting point
                     if(dpInfo[pp_ngbh_idx].cluster_idx == c && currentNgbhDist < minNgbhDist )
                     {
 						minNgbhDist = currentNgbhDist;
@@ -1012,26 +962,41 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
 					//insert one and symmetric one
 					SparseBorder_t b = {.i = c, .j = ppc, .idx = i*ncols + j, .density = dpInfo[i*ncols + j].g, .error = dpInfo[i*ncols + j].log_rho_err}; 
 					SparseBorder_Insert(cluster, b);
-					//get symmetric border
+					
+                    //get symmetric border
 					SparseBorder_t bsym = {.i = ppc, .j = c, .idx = i*ncols + j, .density = dpInfo[i*ncols + j].g, .error = dpInfo[i*ncols + j].log_rho_err}; 
 					SparseBorder_Insert(cluster, bsym);
 
 				}
 				else
 				{
-					if(dpInfo[i*ncols + j].g > borders[c][ppc].density)
-					{
-						borders[c][ppc].density = dpInfo[i*ncols + j].g;
-						borders[ppc][c].density = dpInfo[i*ncols + j].g;
-						borders[c][ppc].idx = i*ncols + j;
-						borders[ppc][c].idx = i*ncols + j;
-					}
+                    // max-g: always collected (base border)
+                    if(borders[c][ppc].idx == NOBORDER || dpInfo[i*ncols + j].g > borders[c][ppc].density)
+                    {
+                        borders[c][ppc].density = dpInfo[i*ncols + j].g;
+                        borders[ppc][c].density = dpInfo[i*ncols + j].g;
+                        borders[c][ppc].idx     = i*ncols + j;
+                        borders[ppc][c].idx     = i*ncols + j;
+                    }
+                    // percentile: only for mode 3
+                    if(ADP_BORDER_STAT == 3)
+                    {
+                        bpairs[nb].key = MIN(c, ppc)*nclus + MAX(c, ppc);  // symmetric key
+                        bpairs[nb].idx = i*ncols + j;
+                        bpairs[nb].g   = dpInfo[i*ncols + j].g;
+                        idx_t key2     = bpairs[nb].key;
+                        if(dpInfo[i*ncols + j].g < seam_min[key2]) seam_min[key2] = dpInfo[i*ncols + j].g;
+                        if(dpInfo[i*ncols + j].g > seam_max[key2]) seam_max[key2] = dpInfo[i*ncols + j].g;
+                        nb++;
+                    }
 				}
 			}
 
-}
+    }
 
-
+    if(ADP_BORDER_STAT == 3)
+        if(bpairs && nb > 1) qsort(bpairs, (size_t)nb, sizeof(bpair_t), bpair_cmp);
+  
 	if(cluster -> UseSparseBorders)
 	{
 		for(idx_t c = 0; c < nclus; ++c)
@@ -1048,21 +1013,67 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
 	else
 	{
 		for(idx_t bi = 0; bi < nclus - 1; ++bi)
-		{
-		for(idx_t bj = bi + 1; bj < nclus; ++bj)
-		{
-			idx_t p = borders[bi][bj].idx;
-			if(p != NOBORDER)
-			{   
+        {
+            for(idx_t bj = bi + 1; bj < nclus; ++bj)
+            {
+                idx_t p = borders[bi][bj].idx;
+                if(p != NOBORDER)
+                {
+                    if(ADP_BORDER_STAT == 3)
+                    {
+                        idx_t key = bi*nclus + bj;
+                        idx_t t0  = 0;
+                        while(bpairs && t0 < nb && bpairs[t0].key < key) t0++;
+                        if(bpairs && t0 < nb && bpairs[t0].key == key)
+                        {
+                            idx_t t1 = t0;
+                            while(t1 < nb && bpairs[t1].key == key) t1++;
+                            idx_t cnt = t1 - t0;
+                            float_t spread     = seam_max[key] - seam_min[key];
+                            float_t seam_scale = 0.f;
+                            for(idx_t tt = t0; tt < t1; ++tt) seam_scale += dpInfo[bpairs[tt].idx].log_rho_err;
+                            seam_scale   /= (float_t)cnt;
+                            float_t perc = (spread < seam_scale) ? 1.0f : 0.0f;
+                            idx_t m      = t0 + (idx_t)(perc * (cnt - 1));
+                            idx_t take   = bpairs[m].idx;
+                            borders[bi][bj].density = dpInfo[take].log_rho_c;
+                            borders[bj][bi].density = dpInfo[take].log_rho_c;
 
-			borders[bi][bj].density = dpInfo[p].log_rho_c;
-			borders[bj][bi].density = dpInfo[p].log_rho_c;
+                            float_t min_center      = MIN(dpInfo[cluster->centers.data[bi]].log_rho_c, dpInfo[cluster->centers.data[bj]].log_rho_c);
+                            float_t ratio           = spread / seam_scale;
+                            float_t alpha           = (ratio < 1.0f) ? 1.0f : 1.0f / (1.0f + (ratio - 1.0f));
+                            borders[bi][bj].density = (1.f - alpha)*borders[bi][bj].density + alpha*min_center;
+                            borders[bj][bi].density = borders[bi][bj].density;
 
-			borders[bi][bj].error = dpInfo[p].log_rho_err;
-			borders[bj][bi].error = dpInfo[p].log_rho_err;
-			}
-		}
-		}
+                            float_t seam_var = 0.f;
+                            for(idx_t tt = t0; tt < t1; ++tt)
+                            {
+                                float_t d = dpInfo[bpairs[tt].idx].log_rho_c - borders[bi][bj].density;
+                                seam_var += d*d;
+                            }
+                            seam_var /= (float_t)cnt;
+                            float_t seam_err = sqrtf(seam_var);
+                            borders[bi][bj].error = seam_err;
+                            borders[bj][bi].error = seam_err;
+                        }
+                        else
+                        {
+                            borders[bi][bj].density = dpInfo[p].log_rho_c;
+                            borders[bj][bi].density = dpInfo[p].log_rho_c;
+                            borders[bi][bj].error   = dpInfo[p].log_rho_err;
+                            borders[bj][bi].error   = dpInfo[p].log_rho_err;
+                        }
+                    }
+                    else  // max-g (mode 0)
+                    {
+                        borders[bi][bj].density = dpInfo[p].log_rho_c;
+                        borders[bj][bi].density = dpInfo[p].log_rho_c;
+                        borders[bi][bj].error   = dpInfo[p].log_rho_err;
+                        borders[bj][bi].error   = dpInfo[p].log_rho_err;
+                    }
+                }
+            }
+        }
 
 		for(idx_t dd = 0; dd < nclus; ++dd)
 		{
@@ -1080,11 +1091,14 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
 
     }
 
+    if(ADP_BORDER_STAT == 3)
+    {
+        if(bpairs) free(bpairs);
+        if(seam_min) { free(seam_min); free(seam_max); }
+    }
     return;
     #undef borders
-   }
-
-
+}
 
 void Merge_A_into_B(idx_t* who_amI, idx_t cluster_A, idx_t cluster_B, idx_t n)
 {
@@ -1102,7 +1116,6 @@ void Merge_A_into_B(idx_t* who_amI, idx_t cluster_A, idx_t cluster_B, idx_t n)
     return;
 }
 
-
 int compare_merging_density( const void *A, const void *B)
 {
   float_t DensA = ((merge_t*)A)->density;
@@ -1111,22 +1124,16 @@ int compare_merging_density( const void *A, const void *B)
   return - ( DensA > DensB) + (DensA < DensB);
 }
 
-
-static inline int is_a_merging( 
-                float_t dens1, float_t dens1_err,
-                float_t dens2, float_t dens2_err,
-                float_t dens_border, float_t dens_border_err,
-                float_t Z)
-/*
- * dens1 : the density of the particle that is the center of the first cluster
- * dens2 : the density of the particle that is the center of the second cluster
- * dens_border : the density of the border btw the cluster 1 and the cluster 2
- * *_err : the errors on the densities
- * Z     : the desired accuracy
- */
+static inline int is_a_merging( float_t dens1, float_t dens1_err, float_t dens2, float_t dens2_err, float_t dens_border, float_t dens_border_err, float_t Z)
 {
-  /* in the original code it was:
-   *
+ /*
+  dens1       : the density of the particle that is the center of the first cluster
+  dens2       : the density of the particle that is the center of the second cluster
+  dens_border : the density of the border btw the cluster 1 and the cluster 2
+  err         : the errors on the densities
+  Z           : the desired accuracy
+  in the original code it was:
+   
   float_t a1 = dpInfo[cluster->centers.data[i]].log_rho_c - border_density[i][j];
   float_t a2 = dpInfo[cluster->centers.data[j]].log_rho_c - border_density[i][j];
   
@@ -1143,17 +1150,13 @@ static inline int is_a_merging(
   return (a1 < e1 || a2 < e2);
 }
 
-
-int merging_roles( float_t dens1, float_t dens1_err,
-			  float_t dens2, float_t dens2_err,
-			  float_t dens_border, float_t dens_border_err )
+int merging_roles( float_t dens1, float_t dens1_err,float_t dens2, float_t dens2_err, float_t dens_border, float_t dens_border_err )
 {
       
   float_t c1 = (dens1 - dens_border) / (dens1_err + dens_border_err); 
   float_t c2 = (dens2 - dens_border) / (dens2_err + dens_border_err);
-  //printf("%.10lf %.10lf %d\n",c1,c2, c1 > c2);
   
-  return ( c1 < c2 );     // if 1, this signal to swap 1 and 2
+  return ( c1 < c2 ); // if 1, this signal to swap 1 and 2
 }
 
 void fix_borders_A_into_B(idx_t A, idx_t B, border_t** borders, idx_t n)
@@ -1191,11 +1194,7 @@ void Delete_adjlist_element(Clusters * c, const idx_t list_idx, const idx_t el)
 }
 
 void fix_SparseBorders_A_into_B(idx_t s,idx_t t,Clusters* c)
-{
-	//delete border trg -> src
-	
-	//idx_t nclus = c -> centers.count;
-	
+{	
 	{
 		{
 			for(idx_t el = 0; el < c -> SparseBorders[t].count; ++el)
@@ -1239,23 +1238,7 @@ void fix_SparseBorders_A_into_B(idx_t s,idx_t t,Clusters* c)
 		{
 			AdjList_reset((c->SparseBorders) + s);
 		}
-		//delete all borders containing src
-	//	for(idx_t i = 0; i < nclus; ++i)
-	//	{
-	//		for(idx_t el = 0; el < c -> SparseBorders[i].count; ++el)
-	//		{
-	//			SparseBorder_t b = c -> SparseBorders[i].data[el];
-	//			if(b.j == s)
-	//			{
-	//				//delete the border src trg
-	//				Delete_adjlist_element(c, i, el);
-	//			}
-	//		}
-	//			
-	//	}
 	}
-
-
 }
 
 void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int halo, int num_threads, bool verbose)
@@ -1282,7 +1265,7 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int
 
   idx_t   merge_count        = 0;
   idx_t   merging_table_size = 1000;
-  merge_t *merging_table      = (merge_t*)malloc(sizeof(merge_t)*merging_table_size);
+  merge_t *merging_table     = (merge_t*)malloc(sizeof(merge_t)*merging_table_size);
   
   /*Find clusters to be merged*/
   for(idx_t i = 0; i < nclus - 1; ++i)   
@@ -1333,59 +1316,48 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int
 
   }
   
-  
-    for( idx_t m = 0; m < merge_count; m++ )
-    {
-      
+  for( idx_t m = 0; m < merge_count; m++)
+    { 
         #define src surviving_clusters[merging_table[m].source]
         #define trg surviving_clusters[merging_table[m].target]
-        //printf("Found: %lu, %lu which now is %lu, %lu\n",merging_table[m].source, merging_table[m].target, src,trg);
+        {
+            idx_t new_src = (src < trg) ? src : trg;
+            idx_t new_trg = (src < trg) ? trg : src;
+            
+            //pick who am I
+            float_t dens1     = dpInfo[cluster->centers.data[new_src]].log_rho_c;
+            float_t dens1_err = dpInfo[cluster->centers.data[new_src]].log_rho_err;
+            float_t dens2     = dpInfo[cluster->centers.data[new_trg]].log_rho_c;
+            float_t dens2_err = dpInfo[cluster->centers.data[new_trg]].log_rho_err;
 
-        //int re_check = ( (src != merging_table[m].source) || (trg != merging_table[m].target) );
-	//if(re_check)
-	{
-		idx_t new_src = (src < trg) ? src : trg;
-		idx_t new_trg = (src < trg) ? trg : src;
+            //borders get
+            SparseBorder_t b 	    = SparseBorder_get(cluster, new_src, new_trg);
+            float_t dens_border     = b.density;
+            float_t dens_border_err = b.error;
 
-                //pick who am I
-
-                float_t dens1           = dpInfo[cluster->centers.data[new_src]].log_rho_c;
-                float_t dens1_err       = dpInfo[cluster->centers.data[new_src]].log_rho_err;
-                float_t dens2           = dpInfo[cluster->centers.data[new_trg]].log_rho_c;
-                float_t dens2_err       = dpInfo[cluster->centers.data[new_trg]].log_rho_err;
-
-		//borders get
-		SparseBorder_t b 	   = SparseBorder_get(cluster, new_src, new_trg);
-                float_t dens_border     = b.density;
-                float_t dens_border_err = b.error;
-
-                int i_have_to_merge = is_a_merging(dens1,dens1_err,dens2,dens2_err,dens_border,dens_border_err,Z);            
-                switch (i_have_to_merge && src != trg)
+            int i_have_to_merge = is_a_merging(dens1,dens1_err,dens2,dens2_err,dens_border,dens_border_err,Z);            
+            
+            switch (i_have_to_merge && src != trg)
                 {
-                case 1:
-                    {
-                        int side = merging_roles(dens1,dens1_err,dens2,dens2_err,dens_border,dens_border_err);
-                        if(!side)
+                    case 1:
                         {
-                            idx_t tmp;
-                            tmp = new_src;
-                            new_src = new_trg;
-                            new_trg = tmp;
-                        }
+                            int side = merging_roles(dens1,dens1_err,dens2,dens2_err,dens_border,dens_border_err);
+                            if(!side)
+                            {
+                                idx_t tmp;
+                                tmp = new_src;
+                                new_src = new_trg;
+                                new_trg = tmp;
+                            }
 
-                        //borders[new_src][new_trg] = border_null;
-                        //borders[new_trg][new_src] = border_null;
-                        //printf("Merging %lu into %lu\n",new_src,new_trg);
-                        fix_SparseBorders_A_into_B(new_src,new_trg,cluster);
-                        Merge_A_into_B ( surviving_clusters, new_src, new_trg, nclus );	  
-                    }
+                            fix_SparseBorders_A_into_B(new_src,new_trg,cluster);
+                            Merge_A_into_B ( surviving_clusters, new_src, new_trg, nclus );	  
+                        }
                     break;
-                
-                default:
+                    default:
                     break;
                 }
-	}
-        
+	        }
         #undef src
         #undef trg
     }
@@ -1397,14 +1369,12 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int
 	elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
 	printf("\tCluster merging:  %.3lfs\n", elapsed);
 	clock_gettime(CLOCK_MONOTONIC, &start); 
-
   }
   
     /*Finalize clustering*/
     /*Acutally copying */
     lu_dynamicArray tmp_centers;
     lu_dynamicArray tmp_cluster_idx;
-
 
     DynamicArray_Init(&tmp_centers);
     DynamicArray_Init(&tmp_cluster_idx);
@@ -1417,8 +1387,7 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int
     idx_t* old_to_new = (idx_t*)malloc(nclus*sizeof(idx_t));
     idx_t incremental_k = 0;
     for(idx_t i = 0; i < nclus; ++i)
-    {
-        
+    { 
         if(surviving_clusters[i] == i){
             DynamicArray_pushBack(&tmp_centers, cluster->centers.data[i]);
             DynamicArray_pushBack(&tmp_cluster_idx, i);
@@ -1432,12 +1401,11 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int
     for(idx_t i = 0; i < nclus; ++i)
     {
 		idx_t cidx_to_copy_from = surviving_clusters[i];
-		old_to_new[i] = old_to_new[cidx_to_copy_from];
+		old_to_new[i]           = old_to_new[cidx_to_copy_from];
     }
 
     /*allocate auxiliary pointers to store results of the finalization of the procedure*/
-
-    AdjList_t* tmp_borders      = (AdjList_t*)malloc(final_cluster_count*sizeof(AdjList_t));
+    AdjList_t* tmp_borders = (AdjList_t*)malloc(final_cluster_count*sizeof(AdjList_t));
 
     //initialize temporary borders
     for(idx_t i = 0; i < final_cluster_count; ++i)
@@ -1448,7 +1416,6 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int
     }
 
     /*initialize all pointers*/
-
     /*Fix cluster assignment*/
     #pragma omp parallel for
     for(idx_t i = 0; i < cluster -> n; ++i)
@@ -1462,7 +1429,6 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int
 
     }
 
-    
     #pragma omp parallel for num_threads(num_threads)
     for(idx_t c = 0; c < final_cluster_count; ++c)
     {
@@ -1483,67 +1449,62 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int
     /*pay attention to the defined borders*/
     /*copy into members*/
     cluster -> SparseBorders = tmp_borders;
-
-
     cluster -> centers = tmp_centers;
-    /**
-     * Fix center assignment
-    */
+    
+    //Fix center assignment
     for(idx_t i = 0; i < cluster -> centers.count; ++i)
     {
         int idx = cluster -> centers.data[i];
         dpInfo[idx].is_center = 1;
     }
+
     /*Halo*/
     switch (halo)
     {
-    case 1:
-	{
-		float_t* max_border_den_array = (float_t*)malloc(final_cluster_count*sizeof(float_t));
-		#pragma omp parallel
-		{
-		    #pragma omp for
-		    for(idx_t c = 0; c < final_cluster_count; ++c)
-		    {
-				float_t max_border_den = -2.;
-				for(idx_t el = 0; el < cluster -> SparseBorders[c].count; ++el)
-				{
-					SparseBorder_t b = cluster -> SparseBorders[c].data[el];
-					if(b.density > max_border_den)
-					{
-						max_border_den = b.density;
-					}
-				}
-				max_border_den_array[c] = max_border_den;
-		    }
+        case 1:
+	        {
+		        float_t* max_border_den_array = (float_t*)malloc(final_cluster_count*sizeof(float_t));
+		        #pragma omp parallel
+		            {
+		                #pragma omp for
+		                for(idx_t c = 0; c < final_cluster_count; ++c)
+		                    {
+                                float_t max_border_den = -2.;
+                                for(idx_t el = 0; el < cluster -> SparseBorders[c].count; ++el)
+                                {
+                                    SparseBorder_t b = cluster -> SparseBorders[c].data[el];
+                                    if(b.density > max_border_den)
+                                    {
+                                        max_border_den = b.density;
+                                    }
+                                }
+                                max_border_den_array[c] = max_border_den;
+                            }
 
-		    #pragma omp barrier
+                            #pragma omp barrier
 
-		    #pragma omp for
-		    for(idx_t i = 0; i < cluster -> n; ++i)
-		    {
-				int cidx = dpInfo[i].cluster_idx;
-				//int halo_flag;
-				if(cidx != -1)
-				{
-					int halo_flag = dpInfo[i].log_rho_c < max_border_den_array[cidx] && !dpInfo[i].is_center; 
-					dpInfo[i].cluster_idx = halo_flag ? -1 : cidx;
-				}
-		    }
-		}
-		free(max_border_den_array);
-	}
+                            #pragma omp for
+                            for(idx_t i = 0; i < cluster -> n; ++i)
+                            {
+                                int cidx = dpInfo[i].cluster_idx;
+                                //int halo_flag;
+                                if(cidx != -1)
+                                {
+                                    int halo_flag = dpInfo[i].log_rho_c < max_border_den_array[cidx] && !dpInfo[i].is_center; 
+                                    dpInfo[i].cluster_idx = halo_flag ? -1 : cidx;
+                                }
+                            }
+                    }
+                free(max_border_den_array);
+            }
         break;
-    
-    default:
+        default:
         break;
     }    
 
     /*free memory and put the correct arrays into place*/
     free(tmp_cluster_idx.data);
     free(merging_table);
-    //free(ipos.data);
-    //free(jpos.data);
     free(surviving_clusters);
     free(old_to_new);
 
@@ -1562,10 +1523,8 @@ void Heuristic3_sparse(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int
         printf("\tTotal time: %.3lfs\n\n", elapsed_tot);
     }
 
-
   #undef  borders  
 }
-
 
 void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int halo, int num_threads, bool verbose)
 {
@@ -1582,7 +1541,7 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int 
   if(verbose) clock_gettime(CLOCK_MONOTONIC, &start_tot);
   if(verbose) clock_gettime(CLOCK_MONOTONIC, &start); 
 
-  idx_t nclus              = cluster -> centers.count;  
+  idx_t nclus                 = cluster -> centers.count;  
   idx_t *  surviving_clusters = (idx_t*)malloc(nclus*sizeof(idx_t));
   for(idx_t i = 0; i < nclus; ++i)
     { 
@@ -1591,54 +1550,47 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int 
 
   idx_t   merge_count        = 0;
   idx_t   merging_table_size = 1000;
-  merge_t *merging_table      = (merge_t*)malloc(sizeof(merge_t)*merging_table_size);
+  merge_t *merging_table     = (merge_t*)malloc(sizeof(merge_t)*merging_table_size);
   
   /*Find clusters to be merged*/
   for(idx_t i = 0; i < nclus - 1; ++i)   
     for(idx_t j = i + 1; j < nclus; ++j)   
-    {
-	switch(borders[i][j].idx != NOBORDER)
-	{
-                    
-	  case 1:		
-	    {
-	      float_t dens1           = dpInfo[cluster->centers.data[i]].log_rho_c;
-	      float_t dens1_err       = dpInfo[cluster->centers.data[i]].log_rho_err;
-	      float_t dens2           = dpInfo[cluster->centers.data[j]].log_rho_c;
-	      float_t dens2_err       = dpInfo[cluster->centers.data[j]].log_rho_err;
-	      float_t dens_border     = borders[i][j].density;
-	      float_t dens_border_err = borders[i][j].error;
+        {
+	        switch(borders[i][j].idx != NOBORDER)
+	            {    
+	                case 1:		
+	                    {
+                            float_t dens1           = dpInfo[cluster->centers.data[i]].log_rho_c;
+                            float_t dens1_err       = dpInfo[cluster->centers.data[i]].log_rho_err;
+                            float_t dens2           = dpInfo[cluster->centers.data[j]].log_rho_c;
+                            float_t dens2_err       = dpInfo[cluster->centers.data[j]].log_rho_err;
+                            float_t dens_border     = borders[i][j].density;
+                            float_t dens_border_err = borders[i][j].error;
 	      
-	    if ( is_a_merging( dens1, dens1_err, dens2, dens2_err, dens_border, dens_border_err, Z ) )
-		{
-		  
-		  if ( merge_count == merging_table_size ) {
-		    merging_table_size *= 1.1;
-		    merging_table = (merge_t*)realloc( merging_table, sizeof(merge_t) * merging_table_size ); }
+                            if (is_a_merging( dens1, dens1_err, dens2, dens2_err, dens_border, dens_border_err, Z))
+                            {
+                                if ( merge_count == merging_table_size ) 
+                                {
+                                    merging_table_size *= 1.1;
+                                    merging_table = (merge_t*)realloc( merging_table, sizeof(merge_t) * merging_table_size ); 
+                                }
 
-		  //int swap = merging_roles( dens1, dens1_err, dens2, dens2_err, dens_border, dens_border_err);
-		  idx_t src = j;
-		  idx_t trg = i;
-		  //switch ( swap )
-		  //  {
-		  //  case 0: { src = j; trg = i;} break;
-		  //  case 1: { src = i; trg = j;} break;
-		  //  }
+                                idx_t src = j;
+                                idx_t trg = i;
 
-		  merging_table[merge_count].source = src;
-		  merging_table[merge_count].target = trg;
-		  merging_table[merge_count].density = borders[src][trg].density;
-          ++merge_count;
-		}
-	      break;
-	    }
-        default:
-	    {
-	      break;
-	    }
-            
-	  }
-      }
+                                merging_table[merge_count].source  = src;
+                                merging_table[merge_count].target  = trg;
+                                merging_table[merge_count].density = borders[src][trg].density;
+                                ++merge_count;
+		                    }
+	                        break;
+	                    }
+                        default:
+	                {
+	                break;
+	                }          
+	            }
+        }
 
   qsort( (void*)merging_table, merge_count, sizeof(merge_t), compare_merging_density);
   if(verbose)
@@ -1648,36 +1600,27 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int 
 	elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
 	printf("\tFinding merges:   %.3lfs\n", elapsed);
 	clock_gettime(CLOCK_MONOTONIC, &start); 
-
   }
   
     for( idx_t m = 0; m < merge_count; m++ )
     {
-      
         #define src surviving_clusters[merging_table[m].source]
         #define trg surviving_clusters[merging_table[m].target]
-        //printf("Found: %lu, %lu which now is %lu, %lu\n",merging_table[m].source, merging_table[m].target, src,trg);
+	    {
+            idx_t new_src = (src < trg) ? src : trg;
+            idx_t new_trg = (src < trg) ? trg : src;
 
-        //int re_check = ( (src != merging_table[m].source) || (trg != merging_table[m].target) );
-	//if(re_check)
-	{
-		idx_t new_src = (src < trg) ? src : trg;
-		idx_t new_trg = (src < trg) ? trg : src;
+            float_t dens1           = dpInfo[cluster->centers.data[new_src]].log_rho_c;
+            float_t dens1_err       = dpInfo[cluster->centers.data[new_src]].log_rho_err;
+            float_t dens2           = dpInfo[cluster->centers.data[new_trg]].log_rho_c;
+            float_t dens2_err       = dpInfo[cluster->centers.data[new_trg]].log_rho_err;
+            float_t dens_border     = borders[new_src][new_trg].density;
+            float_t dens_border_err = borders[new_src][new_trg].error;
 
-                //pick who am I
-
-                float_t dens1           = dpInfo[cluster->centers.data[new_src]].log_rho_c;
-                float_t dens1_err       = dpInfo[cluster->centers.data[new_src]].log_rho_err;
-                float_t dens2           = dpInfo[cluster->centers.data[new_trg]].log_rho_c;
-                float_t dens2_err       = dpInfo[cluster->centers.data[new_trg]].log_rho_err;
-
-                float_t dens_border     = borders[new_src][new_trg].density;
-                float_t dens_border_err = borders[new_src][new_trg].error;
-
-                int i_have_to_merge = is_a_merging(dens1,dens1_err,dens2,dens2_err,dens_border,dens_border_err,Z);            
-                switch (i_have_to_merge && src != trg)
+            int i_have_to_merge = is_a_merging(dens1,dens1_err,dens2,dens2_err,dens_border,dens_border_err,Z);            
+            switch (i_have_to_merge && src != trg)
                 {
-                case 1:
+                    case 1:
                     {
                         int side = merging_roles(dens1,dens1_err,dens2,dens2_err,dens_border,dens_border_err);
                         if(!side)
@@ -1690,17 +1633,15 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int 
 
                         borders[new_src][new_trg] = border_null;
                         borders[new_trg][new_src] = border_null;
-                        //printf("Merging %lu into %lu\n",new_src,new_trg);
+
                         fix_borders_A_into_B(new_src,new_trg,borders,nclus);
                         Merge_A_into_B ( surviving_clusters, new_src, new_trg, nclus );	  
                     }
                     break;
-                
-                default:
+                    default:
                     break;
                 }
-	}
-        
+	    }
         #undef src
         #undef trg
     }
@@ -1712,14 +1653,12 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int 
         elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
         printf("\tCluster merging:  %.3lfs\n", elapsed);
         clock_gettime(CLOCK_MONOTONIC, &start); 
-
     }
   
     /*Finalize clustering*/
     /*Acutally copying */
     lu_dynamicArray tmp_centers;
     lu_dynamicArray tmp_cluster_idx;
-
 
     DynamicArray_Init(&tmp_centers);
     DynamicArray_Init(&tmp_cluster_idx);
@@ -1733,8 +1672,8 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int 
     idx_t incremental_k = 0;
     for(idx_t i = 0; i < nclus; ++i)
     {
-        
-        if(surviving_clusters[i] == i){
+        if(surviving_clusters[i] == i)
+        {
             DynamicArray_pushBack(&tmp_centers, cluster->centers.data[i]);
             DynamicArray_pushBack(&tmp_cluster_idx, i);
             old_to_new[i] = incremental_k;
@@ -1746,14 +1685,14 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int 
     //fill the rest of old_to_new
     for(idx_t i = 0; i < nclus; ++i)
     {
-        if(surviving_clusters[i] != i){
+        if(surviving_clusters[i] != i)
+        {
             idx_t cidx_to_copy_from = surviving_clusters[i];
             old_to_new[i] = old_to_new[cidx_to_copy_from];
         }
     }
 
     /*allocate auxiliary pointers to store results of the finalization of the procedure*/
-
     border_t** tmp_borders      = (border_t**)malloc(final_cluster_count*sizeof(border_t*));
     border_t*  tmp_borders_data = (border_t*)malloc(final_cluster_count*final_cluster_count*sizeof(border_t));
 
@@ -1775,7 +1714,6 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int 
 		}
     }
 
-    
     #pragma omp parallel for
     for(idx_t c = 0; c < final_cluster_count; ++c)
     {
@@ -1801,64 +1739,60 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int 
     borders = tmp_borders;
 
     cluster -> __borders_data = tmp_borders_data;
-
-    cluster -> centers = tmp_centers;
-    /**
-     * Fix center assignment
-    */
+    cluster -> centers        = tmp_centers;
+    
+    /*Fix center assignment*/
     for(idx_t i = 0; i < cluster -> centers.count; ++i)
     {
         int idx = cluster -> centers.data[i];
         dpInfo[idx].is_center = 1;
     }
+    
     /*Halo*/
     switch (halo)
     {
-    case 1:
-	{
-		float_t* max_border_den_array = (float_t*)malloc(final_cluster_count*sizeof(float_t));
-		#pragma omp parallel
-		{
-		    #pragma omp for
-		    for(idx_t c = 0; c < final_cluster_count; ++c)
-		    {
-			float_t max_border_den = -2.;
-			for(idx_t d = 0; d < final_cluster_count; ++d)
-			{
-			    if(tmp_borders[c][d].density > max_border_den)
-			    {
-				max_border_den = tmp_borders[c][d].density;
-			    }
-			}
-			max_border_den_array[c] = max_border_den;
-		    }
+        case 1:
+	        {
+                float_t* max_border_den_array = (float_t*)malloc(final_cluster_count*sizeof(float_t));
+                #pragma omp parallel
+                {
+                    #pragma omp for
+                    for(idx_t c = 0; c < final_cluster_count; ++c)
+                    {
+                    float_t max_border_den = -2.;
+                    for(idx_t d = 0; d < final_cluster_count; ++d)
+                    {
+                        if(tmp_borders[c][d].density > max_border_den)
+                        {
+                        max_border_den = tmp_borders[c][d].density;
+                        }
+                    }
+                    max_border_den_array[c] = max_border_den;
+                    }
 
-		    #pragma omp barrier
+                    #pragma omp barrier
 
-		    #pragma omp for
-		    for(idx_t i = 0; i < cluster -> n; ++i)
-		    {
-			int cidx = dpInfo[i].cluster_idx;
-			if(cidx != -1)
-			{
-				int halo_flag = dpInfo[i].log_rho_c < max_border_den_array[cidx]; 
-				dpInfo[i].cluster_idx = halo_flag ? -1 : cidx;
-			}
-		    }
-		}
-		free(max_border_den_array);
-	}
+                    #pragma omp for
+                    for(idx_t i = 0; i < cluster -> n; ++i)
+                    {
+                        int cidx = dpInfo[i].cluster_idx;
+                        if(cidx != -1)
+                        {
+                            int halo_flag = dpInfo[i].log_rho_c < max_border_den_array[cidx]; 
+                            dpInfo[i].cluster_idx = halo_flag ? -1 : cidx;
+                        }
+                    }
+                }
+                free(max_border_den_array);
+            }
         break;
-    
-    default:
+        default:
         break;
     }    
 
     /*free memory and put the correct arrays into place*/
     free(tmp_cluster_idx.data);
     free(merging_table);
-    //free(ipos.data);
-    //free(jpos.data);
     free(surviving_clusters);
     free(old_to_new);
 
@@ -1880,7 +1814,6 @@ void Heuristic3_dense(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int 
   #undef  borders  
 }
 
-
 void Heuristic3(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int halo, int num_threads, bool verbose)
 {
 	if(cluster -> UseSparseBorders)
@@ -1892,7 +1825,6 @@ void Heuristic3(Clusters* cluster, Datapoint_info* dpInfo, float_t Z, int halo, 
 		Heuristic3_dense(cluster, dpInfo,  Z,  halo, num_threads, verbose);
 	}
 }
-
 
 
 void freeDatapointArray(Datapoint_info* d, size_t n)
@@ -1908,7 +1840,6 @@ int FloatAndUintSize()
 	v = vf + vi*2;
 	return v;
 }
-
 
 void setRhoErrK(Datapoint_info* points, float_t* rho, float_t* rhoErr, idx_t* k, size_t n)
 {
@@ -2010,7 +1941,6 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
     double elapsed_tot;
 
     printf("Density estimation from image\n");
-    //printf("Got: nrows %lu ncols %lu radius %lu\n", nrows, ncols, rmax);
     printf("Got: nrows %d ncols %d radius %d\n", nrows, ncols, rmax);
     clock_gettime(CLOCK_MONOTONIC, &start_tot);
 	
@@ -2025,10 +1955,12 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
             for(int i = 0; i < nrows; ++i)			
                 for(int j = 0; j < ncols; ++j)			
                 {
-                    int n = 0;
+                    p[i*ncols + j].log_rho = -99999.;
+
+                    int n       = 0;
                     float_t avg = 0;
                     float_t var = 0;
-                    int r = use_adaptive_radius ? 1 : rmax - 1;
+                    int r       = use_adaptive_radius ? 1 : rmax - 1;
                     if(mask[i*ncols + j])
                     {
                         for(r = 1; r < rmax; ++r)
@@ -2037,7 +1969,7 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
                             float_t tmp_var = var;
                             int 	tmp_n   = n;
 
-                            n = 0;
+                            n   = 0;
                             avg = 0;
                             var = 0;
                             int jjmin = j - r > 0 			? j - r : 0;  
@@ -2050,9 +1982,9 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
                                 for(int jj = jjmin; jj < jjmax; ++jj)
                                 {
                                     int index = ii*ncols + jj;
-                                    n 	+= (mask[index] ? 1 : 0);	
-                                    avg += (mask[index] ? vals[index] : 0.);	
-                                    var += (mask[index] ? vals[index]*vals[index] : 0.);	
+                                    n 	      += (mask[index] ? 1 : 0);	
+                                    avg       += (mask[index] ? vals[index] : 0.);	
+                                    var       += (mask[index] ? vals[index]*vals[index] : 0.);	
                                 }
                             if(n > 1)
                             {
@@ -2078,22 +2010,6 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
                     }
                     if(n > 1 && mask[i*ncols + j])
                     {
-
-                        // Local density contrast test
-                        // int idx     = i*ncols + j;
-                        // float_t x   = vals[idx];
-                        // float_t eps = 1e-8;
-                        // float_t rho = (x - avg)/(avg + eps);
-
-                        // p[idx].log_rho     = rho;
-                        // p[idx].log_rho_err = sqrt(var);
-                        // p[idx].g           = p[idx].log_rho - p[idx].log_rho_err;
-                        // p[idx].kstar       = (idx_t)r;
-                        // p[idx].array_idx   = idx;
-                        // p[idx].cluster_idx = -1;
-                        
-                        //
-
                         p[i*ncols + j].log_rho = use_log ? log(avg) : avg;
                         p[i*ncols + j].log_rho_err = use_log ? sqrt(var)/avg : sqrt(avg);
                         p[i*ncols + j].g = p[i*ncols + j].log_rho - p[i*ncols + j].log_rho_err;
@@ -2110,7 +2026,8 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
                         p[i*ncols + j].cluster_idx = -1;
                     }
                 }
-            break;
+        break;
+        
         case MEDIAN:
             #pragma omp parallel 
             {
@@ -2119,12 +2036,12 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
                 for(int i = 0; i < nrows; ++i)			
                     for(int j = 0; j < ncols; ++j)			
                     {
-                        int n = 0;
+                        int n       = 0;
                         float_t avg = 0;
                         float_t var = 0;
                         if(mask[i*ncols + j])
                         {
-                            n = 0;
+                            n  = 0;
                             avg = 0;
                             var = 0;
                             int jjmin = j - rmax > 0 			? j - rmax : 0;  
@@ -2180,7 +2097,8 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
                     }
                 free(vals_for_median);
             }
-            break;
+        break;
+        
         case GAUSSIAN:
             {
                 float_t* gaussian_weights = (float_t*)calloc((2 * rmax + 1) * (2 * rmax + 1), sizeof(float_t));
@@ -2205,7 +2123,8 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
 
                 free(gaussian_weights);
             }
-            break;
+        break;
+        
         case SPLINE:
             {
                 // Precompute SPH cubic spline weights 
@@ -2217,11 +2136,10 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
                 for(idx_t i = 0; i < 2 * rmax + 1; ++i)
                     for(idx_t j = 0; j < 2 * rmax + 1; ++j)
                     {
-                        float_t dist = sqrt((float_t)(i - center)*(i - center)
-                                        + (float_t)(j - center)*(j - center));
-                        float_t q = dist / (float_t)param;   // normalised distance
+                        float_t dist = sqrt((float_t)(i - center)*(i - center) + (float_t)(j - center)*(j - center));
+                        float_t q    = dist / (float_t)param;   // normalised distance
 
-                        float_t w = 0;
+                        float_t w          = 0;
                         if     (q < 1.f) w = 1.f - 1.5f*q*q + 0.75f*q*q*q;
                         else if(q < 2.f) w = 0.25f * (2.f - q)*(2.f - q)*(2.f - q);
                         // q >= 2: w = 0 (compact support)
@@ -2237,12 +2155,14 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
 
                 free(sph_weights);
             }
-            break;
+        break;
+        
         default:
             printf("Select a valid algorithm `MEAN` or `MEDIAN` for the density computation\n");
             break;
     }
-	for(int idx = 0; idx < nrows*ncols; ++idx) mask[idx] = mask[idx] * tmp_mask[idx];
+	
+    for(int idx = 0; idx < nrows*ncols; ++idx) mask[idx] = mask[idx] * tmp_mask[idx];
 	free(tmp_mask);
 
     clock_gettime(CLOCK_MONOTONIC, &finish_tot);
@@ -2256,8 +2176,6 @@ Datapoint_info* computeDensityFromImg(float_t* vals, int* mask, int nrows, int n
 #define RED(x)      (3 * x) 
 #define GREEN(x)    (3 * x + 1) 
 #define BLUE(x)     (3 * x + 2)
-
-
 
 void tiny_colorize(
         const char* fname, 
@@ -2278,15 +2196,16 @@ void tiny_colorize(
     uint32_t offset = og_width;
    
     unsigned char* palette = (unsigned char*)malloc(3 * (n_clusters + 1));
+    
     /* generate palette */
     palette[RED(0)]     = 255;
     palette[GREEN(0)]   = 255;
     palette[BLUE(0)]    = 255;
     for(uint32_t i = 1; i < n_clusters + 1; ++i)
     {
-        palette[RED(i)]     = (unsigned char)(rand() % 256);
-        palette[GREEN(i)]   = (unsigned char)(rand() % 256);
-        palette[BLUE(i)]    = (unsigned char)(rand() % 256);
+        palette[RED(i)]   = (unsigned char)(rand() % 256);
+        palette[GREEN(i)] = (unsigned char)(rand() % 256);
+        palette[BLUE(i)]  = (unsigned char)(rand() % 256);
     }
 
     for(uint32_t i = 0; i < og_height; ++i)
@@ -2295,9 +2214,9 @@ void tiny_colorize(
             uint32_t idx = i * stride + j;
             int cluster_idx = dp[i * og_width + j].cluster_idx + 1;
 
-            img_buffer[RED(idx)] = palette[RED(cluster_idx)]; 
+            img_buffer[RED(idx)]   = palette[RED(cluster_idx)]; 
             img_buffer[GREEN(idx)] = palette[GREEN(cluster_idx)]; 
-            img_buffer[BLUE(idx)] = palette[BLUE(cluster_idx)]; 
+            img_buffer[BLUE(idx)]  = palette[BLUE(cluster_idx)]; 
         }
 
     float_t data_max = -9999999.f;
@@ -2313,30 +2232,22 @@ void tiny_colorize(
     for(uint32_t i = 0; i < og_height; ++i)
         for(uint32_t j = 0; j < og_width; ++j)
         {
-            uint32_t idx = i * stride + j + offset;
-            float_t val = data[i * og_width + j];
+            uint32_t idx   = i * stride + j + offset;
+            float_t val   = data[i * og_width + j];
             float_t vnorm = (val - data_min)*delta;
+            float_t v     = (a * vnorm/(c * vnorm + (a - c)));
 
-            //unsigned char v = (unsigned char)(a * vnorm/(c * vnorm + (a - c))*255.);
-            //unsigned char v = (unsigned char)((val - data_min)*delta*255.);
-            //unsigned char v = (unsigned char)(0.5*(tanh(100 * vnorm - 2.5) + 1)*255.);
-            float_t v = (a * vnorm/(c * vnorm + (a - c)));
-
-            img_buffer[RED(idx)]    = (unsigned char)(v * 255); 
-            img_buffer[GREEN(idx)]  = (unsigned char)(v * 255); 
-            img_buffer[BLUE(idx)]   = (unsigned char)(v * 255); 
-
-            
+            img_buffer[RED(idx)]   = (unsigned char)(v * 255); 
+            img_buffer[GREEN(idx)] = (unsigned char)(v * 255); 
+            img_buffer[BLUE(idx)]  = (unsigned char)(v * 255);   
         }
     
-     unsigned char* out_pixels = stbir_resize_uint8_srgb( img_buffer,  2 * og_width,  og_height,  0,
-                                                  NULL, 2 * target_width, target_height, 0,
-                                                  STBIR_RGB);
-     stbi_write_png(fname, 2 * target_width, target_height, 3, out_pixels, 0);
+    unsigned char* out_pixels = stbir_resize_uint8_srgb( img_buffer,  2 * og_width,  og_height,  0, NULL, 2 * target_width, target_height, 0, STBIR_RGB);
+    stbi_write_png(fname, 2 * target_width, target_height, 3, out_pixels, 0);
    
-     free(out_pixels);
-     free(img_buffer);
-     free(palette);
+    free(out_pixels);
+    free(img_buffer);
+    free(palette);
     
 }
 
@@ -2344,36 +2255,134 @@ void tiny_colorize(
 #undef GREEN
 #undef RED
 
+void compute_eigensystem_2x2(const double *A, double *lambda, double *V) {
+    // A is symmetric: [[a, b], [b, d]]
+    double a = A[0];
+    double b = A[1];
+    double d = A[3]; // Note: A[2] is also 'b'
+
+    // Use a small tolerance for comparison with zero
+    const double EPS = 1e-9;
+
+    // 1. Compute Eigenvalues (lambda)
+    // Formula: lambda = ( (a+d) +/- sqrt((a-d)^2 + 4*b^2) ) / 2
+    double sum       = a + d;
+    double diff_sq   = (a - d) * (a - d);
+    double four_b_sq = 4.0 * b * b;
+
+    // Discriminant Delta = (a-d)^2 + 4*b^2. Always non-negative.
+    double delta      = diff_sq + four_b_sq;
+    double sqrt_delta = sqrt(delta);
+
+    // Store eigenvalues (lambda[0] = lambda1, lambda[1] = lambda2)
+    lambda[0] = (sum + sqrt_delta) / 2.0; // Larger eigenvalue
+    lambda[1] = (sum - sqrt_delta) / 2.0; // Smaller eigenvalue
+
+    // 2. Compute Eigenvectors (V)
+    double lambda1 = lambda[0];
+    double lambda2 = lambda[1];
+
+    // --- Eigenvector 1 (for lambda1) ---
+    // General case: v1 = [ b, lambda1 - a ]^T
+    if (fabs(b) < EPS) 
+    {
+        // Case: Diagonal matrix (b=0)
+        // Eigenvectors are [1, 0] and [0, 1].
+        V[0] = 1.0;
+        V[1] = 0.0;
+    } 
+    else 
+    {
+        // Standard case: [ b, lambda1 - a ]^T
+        V[0] = b;
+        V[1] = lambda1 - a;
+    }
+    
+    // --- Eigenvector 2 (for lambda2) ---
+    // V[2], V[3] store v2
+    // General case: v2 = [ b, lambda2 - a ]^T
+    if (fabs(b) < EPS) 
+    {
+        // Case: Diagonal matrix (b=0)
+        // Eigenvectors are [1, 0] and [0, 1].
+        // If lambda1 == lambda2, use the orthogonal basis [0, 1] for v2
+        if (fabs(lambda1 - lambda2) < EPS) 
+        {
+            V[2] = 0.0;
+            V[3] = 1.0;
+        } 
+        else 
+        {
+             // Distinct eigenvalues: The eigenvectors are [1, 0] and [0, 1].
+            V[2] = 0.0;
+            V[3] = 1.0;
+        }
+    } 
+    else 
+    {
+        // Standard case: [ b, lambda2 - a ]^T
+        V[2] = b;
+        V[3] = lambda2 - a;
+    }
+
+    // normalize eigenvector 1
+    double n1 = sqrt(V[0]*V[0] + V[1]*V[1]);
+    if (n1 > EPS) 
+    {
+        V[0] /= n1;
+        V[1] /= n1;
+    }
+
+    // normalize eigenvector 2
+    double n2 = sqrt(V[2]*V[2] + V[3]*V[3]);
+    if (n2 > EPS) 
+    {
+        V[2] /= n2;
+        V[3] /= n2;
+    }
+}
+
+void compute_eigensystems(float_t* cov_matrices, float_t* lambdas, float_t* vs, int nclusters)
+{
+    #pragma omp parallel for
+    for(int lab = 0; lab < nclusters; ++lab)
+    {
+        compute_eigensystem_2x2(cov_matrices + lab*4, lambdas + 2*lab, vs + 4*lab);
+    }
+}
+
+void export_cluster_assignment(Datapoint_info* points, int* labels, idx_t n)
+{
+	for(idx_t i = 0; i < n; ++i) labels[i] = points[i].cluster_idx;
+}
+
 void compute_covs(float_t* image, int* segmentation_map, int* mask, 
-                  int nrows, int ncols, int nclusters, 
-                  float_t* centers_of_mass, 
-                  float_t* cov_matrices, 
-                  float_t* flux,
-                  int* areas,
-                  float_t* rmax,
-                  int* parent_id,
-                  int* x_limits,
-                  int* y_limits)
+                   int nrows, int ncols, int nclusters, 
+                   float_t* centers_of_mass, 
+                   float_t* cov_matrices, 
+                   float_t* flux,
+                   int* areas,
+                   float_t* rmax,
+                   int* parent_id,
+                   int* x_limits,
+                   int* y_limits)
 {
     #define LOWER_BOUND(x) (2*x) 
     #define UPPER_BOUND(x) (2*x + 1) 
 
-    float_t* rew_com  = calloc(2 * nclusters, sizeof(float_t));
-    float_t* rew_norm = calloc(nclusters, sizeof(float_t));
-
-    // initialization
+    // Initialize outputs
     #pragma omp parallel for
     for(int i = 0; i < nclusters; ++i)
     {
-        centers_of_mass[2*i]     = 0;
-        centers_of_mass[2*i + 1] = 0;
+        centers_of_mass[2*i]     = 0.0;
+        centers_of_mass[2*i + 1] = 0.0;
 
-        cov_matrices[4*i]     = 0.;
-        cov_matrices[4*i + 1] = 0.;
-        cov_matrices[4*i + 2] = 0.;
-        cov_matrices[4*i + 3] = 0.;
-
-        parent_id[i]    = -1;
+        cov_matrices[4*i]     = 0.0;
+        cov_matrices[4*i + 1] = 0.0;
+        cov_matrices[4*i + 2] = 0.0;
+        cov_matrices[4*i + 3] = 0.0;
+        
+        parent_id[i]          = -1;
 
         x_limits[LOWER_BOUND(i)] = ncols; 
         x_limits[UPPER_BOUND(i)] = 0;
@@ -2381,24 +2390,53 @@ void compute_covs(float_t* image, int* segmentation_map, int* mask,
         y_limits[LOWER_BOUND(i)] = nrows; 
         y_limits[UPPER_BOUND(i)] = 0;
 
-        flux[i]    = 0.;
-        areas[i]   = 0.;
-        rmax[i]    = 0.;
+        flux[i]  = 0.0;
+        areas[i] = 0;
+        rmax[i]  = 0.0;
     }
+    
+    // Global accumulators for COM sum (to be reduced across threads)
+    // These are shared by all threads
+    float_t* com_sum_x = (float_t*)calloc(nclusters, sizeof(float_t));
+    float_t* com_sum_y = (float_t*)calloc(nclusters, sizeof(float_t));
+    
+    // Thread-local total flux for each cluster (absolute, from Pass 1)
+    float_t* global_flux = (float_t*)calloc(nclusters, sizeof(float_t));
+    
+    // sum of squared absolute flux for each cluster (sum(w^2)) for np.cov-style normalization
+    float_t* global_flux2 = (float_t*)calloc(nclusters, sizeof(float_t));
+
+    // Shared accumulators for reweighted COM (pass 2)
+    float_t* rew_sum_x = (float_t*)calloc(nclusters, sizeof(float_t));
+    float_t* rew_sum_y = (float_t*)calloc(nclusters, sizeof(float_t));
+    float_t* rew_norm  = (float_t*)calloc(nclusters, sizeof(float_t));
+
+    // Shared flux-weighted COM (COM_std) arrays — must be shared so all threads see the same values
+    float_t* com_std_x = (float_t*)calloc(nclusters, sizeof(float_t));
+    float_t* com_std_y = (float_t*)calloc(nclusters, sizeof(float_t));
 
     #pragma omp parallel
     {
-        float_t* pvt_centers_of_mass = (float_t*)calloc(2 * nclusters, sizeof(float_t));
-        float_t* pvt_rew_com         = (float_t*)calloc(2 * nclusters, sizeof(float_t));
-        float_t* pvt_rew_norm        = (float_t*)calloc(nclusters, sizeof(float_t));   
-        float_t* pvt_cov_matrices    = (float_t*)calloc(4 * nclusters, sizeof(float_t));
-        float_t* pvt_flux            = (float_t*)calloc(nclusters, sizeof(float_t));
-        float_t* pvt_r_max           = (float_t*)calloc(nclusters, sizeof(float_t));
+        // Thread-local accumulators for Pass 1 (standard COM - flux-weighted)
+        float_t* pvt_com_sum_x = (float_t*)calloc(nclusters, sizeof(float_t));
+        float_t* pvt_com_sum_y = (float_t*)calloc(nclusters, sizeof(float_t));
+        float_t* pvt_flux      = (float_t*)calloc(nclusters, sizeof(float_t));
+        float_t* pvt_flux2     = (float_t*)calloc(nclusters, sizeof(float_t));
         
-        int* pvt_areas                  = (int*)calloc(nclusters, sizeof(int));
-        int* pvt_x_limits               = (int*)calloc(2 * nclusters, sizeof(int));
-        int* pvt_y_limits               = (int*)calloc(2 * nclusters, sizeof(int));
-        int* pvt_parent_id              = (int*)malloc(nclusters * sizeof(int));
+        // Thread-local accumulators for Pass 2 (reweighted COM - flux/d)
+        // Using separate accumulators for thread-local processing
+        float_t* pvt_rew_sum_x = (float_t*)calloc(nclusters, sizeof(float_t));
+        float_t* pvt_rew_sum_y = (float_t*)calloc(nclusters, sizeof(float_t));
+        float_t* pvt_rew_norm  = (float_t*)calloc(nclusters, sizeof(float_t));
+        
+        // Thread-local accumulators for Pass 3 (covariance with COM_std as origin)
+        float_t* pvt_cov       = (float_t*)calloc(4 * nclusters, sizeof(float_t));
+        float_t* pvt_r_max     = (float_t*)calloc(nclusters, sizeof(float_t));
+        
+        int* pvt_areas         = (int*)calloc(nclusters, sizeof(int));
+        int* pvt_x_limits      = (int*)calloc(2 * nclusters, sizeof(int));
+        int* pvt_y_limits      = (int*)calloc(2 * nclusters, sizeof(int));
+        int* pvt_parent_id     = (int*)malloc(nclusters * sizeof(int));
 
         for(int i = 0; i < nclusters; ++i)
         {
@@ -2409,52 +2447,55 @@ void compute_covs(float_t* image, int* segmentation_map, int* mask,
             pvt_parent_id[i] = -1;
         }
 
+        // ===== PASS 1: Compute standard COM and total flux =====
+        // Uses ABSOLUTE pix_flux as weights
+        // Store COM_std in thread-local array for later use in Pass 2 and 3
         #pragma omp for
-        for(int yy = 0; yy < nrows; ++yy)
-            for(int xx = 0; xx < ncols; ++xx)
+        for(int yy = 0; yy < nrows; ++yy) 
+        {
+            for(int xx = 0; xx < ncols; ++xx) 
             {
                 int lab = segmentation_map[yy*ncols + xx]; 
                 if (lab != -1)
                 {   
                     float_t pix_flux = image[yy*ncols + xx];
-                    if (pix_flux < 0) pix_flux = fabs(pix_flux);
-                    {
-                        pvt_centers_of_mass[2*lab]     += (float_t)xx * pix_flux;
-                        pvt_centers_of_mass[2*lab + 1] += (float_t)yy * pix_flux;
-                        pvt_flux[lab]                  += pix_flux;
-                    }
+                    if (pix_flux < 0) pix_flux = -pix_flux;  // Use absolute value
+                    
+                    pvt_com_sum_x[lab] += (float_t)xx * pix_flux;  // cols
+                    pvt_com_sum_y[lab] += (float_t)yy * pix_flux;  // rows
+                    pvt_flux[lab]      += pix_flux;
+                    pvt_flux2[lab]     += pix_flux * pix_flux;
                     
                     pvt_areas[lab] += 1;
 
-                    // if(parent_id[lab] == -1) parent_id[lab] = mask[yy*ncols + xx];
-                    
                     int det_id = mask[yy*ncols + xx];
-                    if (det_id > 0 && pvt_parent_id[lab] == -1) {
+                    if (det_id > 0 && pvt_parent_id[lab] == -1) 
+                    {
                         pvt_parent_id[lab] = det_id;
                     }
 
-                    // pvt_x_limits[LOWER_BOUND(lab)] = MIN(yy, pvt_x_limits[LOWER_BOUND(lab)]);
-                    // pvt_x_limits[UPPER_BOUND(lab)] = MAX(yy, pvt_x_limits[UPPER_BOUND(lab)]);
                     pvt_x_limits[LOWER_BOUND(lab)] = MIN(xx, pvt_x_limits[LOWER_BOUND(lab)]);
                     pvt_x_limits[UPPER_BOUND(lab)] = MAX(xx, pvt_x_limits[UPPER_BOUND(lab)]);
 
-                    // pvt_y_limits[LOWER_BOUND(lab)] = MIN(xx, pvt_y_limits[LOWER_BOUND(lab)]);
-                    // pvt_y_limits[UPPER_BOUND(lab)] = MAX(xx, pvt_y_limits[UPPER_BOUND(lab)]);
                     pvt_y_limits[LOWER_BOUND(lab)] = MIN(yy, pvt_y_limits[LOWER_BOUND(lab)]);
                     pvt_y_limits[UPPER_BOUND(lab)] = MAX(yy, pvt_y_limits[UPPER_BOUND(lab)]);
                 }
             }
+        }
 
-        // reduction
+        // Reduction: merge thread-local values to global (flux, areas, etc.)
         #pragma omp critical (merging_coms)
         {
             for(int i = 0; i < nclusters; ++i)
             {
-                centers_of_mass[2*i]     += pvt_centers_of_mass[2*i];
-                centers_of_mass[2*i + 1] += pvt_centers_of_mass[2*i + 1];
-
-                areas[i]   += pvt_areas[i];
+                global_flux2[i] += pvt_flux2[i];
                 flux[i]    += pvt_flux[i];
+                global_flux[i] += pvt_flux[i];  // Store absolute flux for Pass 2 & 3
+                areas[i]   += pvt_areas[i];
+                
+                // Reduce thread-local COM sum to global
+                com_sum_x[i] += pvt_com_sum_x[i];
+                com_sum_y[i] += pvt_com_sum_y[i];
 
                 x_limits[LOWER_BOUND(i)] = MIN(x_limits[LOWER_BOUND(i)], pvt_x_limits[LOWER_BOUND(i)]);
                 x_limits[UPPER_BOUND(i)] = MAX(x_limits[UPPER_BOUND(i)], pvt_x_limits[UPPER_BOUND(i)]);
@@ -2473,267 +2514,226 @@ void compute_covs(float_t* image, int* segmentation_map, int* mask,
         #pragma omp single
         {
             int max_det_id = -1;
-            for (int lab = 0; lab < nclusters; ++lab) {
+            for (int lab = 0; lab < nclusters; ++lab) 
+            {
                 if (parent_id[lab] > max_det_id) max_det_id = parent_id[lab];
             }
 
             int* det_child_count = (int*)calloc(max_det_id + 1, sizeof(int));
 
-            for (int lab = 0; lab < nclusters; ++lab) {
+            for (int lab = 0; lab < nclusters; ++lab) 
+            {
                 int det_id = parent_id[lab];
-                if (det_id != -1) {
+                if (det_id != -1) 
+                {
                     det_child_count[det_id] += 1;
                 }
             }
 
-            for (int lab = 0; lab < nclusters; ++lab) {
+            for (int lab = 0; lab < nclusters; ++lab) 
+            {
                 int det_id = parent_id[lab];
                 if (det_id == -1) continue;
 
                 if (det_child_count[det_id] <= 1)
-                    parent_id[lab] = -1;      // not deblended
+                    parent_id[lab] = -1;
                 else
-                    parent_id[lab] = det_id;  // deblended child
+                    parent_id[lab] = det_id;
             }
 
             free(det_child_count);
         }
 
-        // #pragma omp barrier
+        #pragma omp barrier
 
+        // ===== PASS 2: Compute reweighted COM using w' = pix_flux / d =====
+        // Compute COM_std first (flux-weighted COM) into SHARED arrays
+        #pragma omp single
+        for(int i = 0; i < nclusters; ++i)
+        {
+            if (global_flux[i] > 0.0) 
+            {
+                com_std_x[i] = com_sum_x[i] / global_flux[i];  // COM_std_x (using global sum)
+                com_std_y[i] = com_sum_y[i] / global_flux[i];  // COM_std_y (using global sum)
+            } 
+            else 
+            {
+                com_std_x[i] = 0.0;
+                com_std_y[i] = 0.0;
+            }
+        }
+        
+        #pragma omp barrier
+
+        // Clear accumulators for reweighted COM
+        #pragma omp for
+        for(int lab = 0; lab < nclusters; ++lab)
+        {
+            pvt_rew_sum_x[lab] = 0.0;
+            pvt_rew_sum_y[lab] = 0.0;
+            pvt_rew_norm[lab]  = 0.0;
+        }
+
+        #pragma omp barrier
+
+        // Compute reweighted COM
+        #pragma omp for
+        for(int yy = 0; yy < nrows; ++yy) 
+        {
+            for(int xx = 0; xx < ncols; ++xx) 
+            {
+                int lab = segmentation_map[yy*ncols + xx]; 
+                if (lab != -1)
+                {
+                    float_t pix_flux = image[yy*ncols + xx];
+                    if (pix_flux < 0) pix_flux = -pix_flux;  // Use absolute value
+
+                    // Distance from COM_std (flux-weighted COM, shared array)
+                    float_t dx = (float_t)xx - com_std_x[lab];  // cols offset
+                    float_t dy = (float_t)yy - com_std_y[lab];  // rows offset
+                    float_t d = sqrt(dx*dx + dy*dy);
+                    
+                    // Handle d=0 to avoid division by zero
+                    if (d == 0.0) d = 1.0;
+
+                    // Reweighted: w' = pix_flux / d
+                    float_t w_tot = pix_flux / d;
+
+                    pvt_rew_sum_x[lab] += (float_t)xx * w_tot;  // cols
+                    pvt_rew_sum_y[lab] += (float_t)yy * w_tot;  // rows
+                    pvt_rew_norm[lab]  += w_tot;
+                }
+            }
+        }
+
+        // Reduction: merge to global for reweighted COM
+        #pragma omp critical (merging_reweighted)
+        {
+            for(int lab = 0; lab < nclusters; ++lab)
+            {
+                rew_sum_x[lab] += pvt_rew_sum_x[lab];
+                rew_sum_y[lab] += pvt_rew_sum_y[lab];
+                rew_norm[lab]  += pvt_rew_norm[lab];
+            }
+        }
+
+        #pragma omp barrier
+
+        // Store COM_final (reweighted) in centers_of_mass
         #pragma omp for
         for(int i = 0; i < nclusters; ++i)
         {
-            // centers_of_mass[2*i]     = centers_of_mass[2*i]    /areas[i];
-            // centers_of_mass[2*i + 1] = centers_of_mass[2*i + 1]/areas[i];
-            centers_of_mass[2*i]     = centers_of_mass[2*i]    /flux[i];
-            centers_of_mass[2*i + 1] = centers_of_mass[2*i + 1]/flux[i];
-        }
-
-        #pragma omp for
-        for(int yy = 0; yy < nrows; ++yy)
-            for(int xx = 0; xx < ncols; ++xx)
+            if (rew_norm[i] > 0.0) 
             {
-                int lab = segmentation_map[yy*ncols + xx];
-
-                if(lab != -1)
-                {
-                    float_t pix_flux = image[yy*ncols + xx];
-                    if(pix_flux < 0) pix_flux = fabs(pix_flux);
-
-                    float_t dx = (float_t)xx - centers_of_mass[2*lab];
-                    float_t dy = (float_t)yy - centers_of_mass[2*lab + 1];
-
-                    float_t d = sqrt(dx*dx + dy*dy);
-                    if(d == 0.0)
-                        d = 1.0;
-
-                    float_t w_tot = pix_flux / d;
-
-                    pvt_rew_com[2*lab]     += (float_t)xx * w_tot;
-                    pvt_rew_com[2*lab + 1] += (float_t)yy * w_tot;
-                    pvt_rew_norm[lab]      += w_tot;
-                }
-            }
-
-        #pragma omp critical (merging_reweighted_com)
-        {
-            for(int lab = 0; lab < nclusters; ++lab)
+                centers_of_mass[2*i]     = rew_sum_x[i] / rew_norm[i];
+                centers_of_mass[2*i + 1] = rew_sum_y[i] / rew_norm[i];
+            } 
+            else 
             {
-                rew_com[2*lab]     += pvt_rew_com[2*lab];
-                rew_com[2*lab + 1] += pvt_rew_com[2*lab + 1];
-
-                rew_norm[lab]      += pvt_rew_norm[lab];
+                centers_of_mass[2*i]     = 0.0;
+                centers_of_mass[2*i + 1] = 0.0;
             }
         }
 
         #pragma omp barrier
 
-        #pragma omp single
-        {
-            for(int lab = 0; lab < nclusters; ++lab)
-            {
-                if(rew_norm[lab] > 0.0)
-                {
-                    centers_of_mass[2*lab]     = rew_com[2*lab]     / rew_norm[lab];
-                    centers_of_mass[2*lab + 1] = rew_com[2*lab + 1] / rew_norm[lab];
-                }
-            }
-        }
-
-        #pragma omp barrier
-
+        // ===== PASS 3: Compute covariance using flux-weighted COM (COM_std) as origin =====
+        // Uses original pix_flux weights (absolute values from Pass 1)
+        // This matches np.cov(aweights=flux) which centers at the flux-weighted mean.
         #pragma omp for
-        for(int yy = 0; yy < nrows; ++yy)
-            for(int xx = 0; xx < ncols; ++xx)
+        for(int yy = 0; yy < nrows; ++yy) 
+        {
+            for(int xx = 0; xx < ncols; ++xx) 
             {
                 int lab = segmentation_map[yy*ncols + xx]; 
                 if(lab != -1)
                 {
-                    float x_n = (float_t)xx - centers_of_mass[2*lab];
-                    float y_n = (float_t)yy - centers_of_mass[2*lab + 1];
+                    // Use flux-weighted COM (COM_std) as origin, matching np.cov(aweights=flux)
+                    float_t x_n = (float_t)xx - com_std_x[lab];  // cols
+                    float_t y_n = (float_t)yy - com_std_y[lab];  // rows
 
                     float_t pix_flux = image[yy*ncols + xx];
-                    float_t r        = sqrt(x_n * x_n + y_n * y_n);
+                    if (pix_flux < 0) pix_flux = -pix_flux;  // Use absolute value
+                    
+                    float_t r = sqrt(x_n * x_n + y_n * y_n);
                     if (r > pvt_r_max[lab]) pvt_r_max[lab] = r;
                     
-                    // pvt_cov_matrices[4*lab    ] += x_n * x_n;
-                    // pvt_cov_matrices[4*lab + 1] += x_n * y_n;
-                    // pvt_cov_matrices[4*lab + 2] += x_n * y_n;
-                    // pvt_cov_matrices[4*lab + 3] += y_n * y_n;
-                    if (pix_flux < 0) pix_flux = fabs(pix_flux);
-                    {
-                        pvt_cov_matrices[4*lab    ] += x_n * x_n * pix_flux;
-                        pvt_cov_matrices[4*lab + 1] += x_n * y_n * pix_flux;
-                        pvt_cov_matrices[4*lab + 2] += x_n * y_n * pix_flux;
-                        pvt_cov_matrices[4*lab + 3] += y_n * y_n * pix_flux;
-                    }
+                    // Covariance with COM_std as origin, using ORIGINAL pix_flux weights
+                    pvt_cov[4*lab    ] += x_n * x_n * pix_flux;
+                    pvt_cov[4*lab + 1] += x_n * y_n * pix_flux;
+                    pvt_cov[4*lab + 2] += x_n * y_n * pix_flux;
+                    pvt_cov[4*lab + 3] += y_n * y_n * pix_flux;
                 }
             }
+        }
 
+        // Reduction for covariance
         #pragma omp critical (merging_cov)
         {
             for(int lab = 0; lab < nclusters; ++lab)
             {
-                    cov_matrices[4*lab]     += pvt_cov_matrices[4*lab];
-                    cov_matrices[4*lab + 1] += pvt_cov_matrices[4*lab + 1];
-                    cov_matrices[4*lab + 2] += pvt_cov_matrices[4*lab + 2];
-                    cov_matrices[4*lab + 3] += pvt_cov_matrices[4*lab + 3];
+                cov_matrices[4*lab    ] += pvt_cov[4*lab    ];
+                cov_matrices[4*lab + 1] += pvt_cov[4*lab + 1];
+                cov_matrices[4*lab + 2] += pvt_cov[4*lab + 2];
+                cov_matrices[4*lab + 3] += pvt_cov[4*lab + 3];
 
-                    x_limits[2*lab    ] = MIN(pvt_x_limits[2*lab], x_limits[2*lab]);
-                    x_limits[2*lab + 1] = MAX(pvt_x_limits[2*lab + 1], x_limits[2*lab + 1]);
-
-                    y_limits[2*lab    ] = MIN(pvt_y_limits[2*lab], y_limits[2*lab]);
-                    y_limits[2*lab + 1] = MAX(pvt_y_limits[2*lab + 1], y_limits[2*lab + 1]);
-                    
-                    rmax[lab]           = MAX(rmax[lab], pvt_r_max[lab]);
+                x_limits[2*lab    ] = MIN(pvt_x_limits[2*lab    ], x_limits[2*lab    ]);
+                x_limits[2*lab + 1] = MAX(pvt_x_limits[2*lab + 1], x_limits[2*lab + 1]);
+                y_limits[2*lab    ] = MIN(pvt_y_limits[2*lab    ], y_limits[2*lab    ]);
+                y_limits[2*lab + 1] = MAX(pvt_y_limits[2*lab + 1], y_limits[2*lab + 1]);
+                rmax[lab]           = MAX(rmax[lab], pvt_r_max[lab]);
             }
         }
 
         #pragma omp barrier
 
+        // Normalize covariance matching np.cov(aweights=flux):
+        // denominator = sum(w) - sum(w^2)/sum(w)  (bias=True, effective ddof)
         #pragma omp for
         for(int lab = 0; lab < nclusters; ++lab)
         {
-                // cov_matrices[4*lab]     = cov_matrices[4*lab]    /(areas[lab]-1);
-                // cov_matrices[4*lab + 1] = cov_matrices[4*lab + 1]/(areas[lab]-1);
-                // cov_matrices[4*lab + 2] = cov_matrices[4*lab + 2]/(areas[lab]-1);
-                // cov_matrices[4*lab + 3] = cov_matrices[4*lab + 3]/(areas[lab]-1);
-
-                cov_matrices[4*lab]     = cov_matrices[4*lab]    /flux[lab];
-                cov_matrices[4*lab + 1] = cov_matrices[4*lab + 1]/flux[lab];
-                cov_matrices[4*lab + 2] = cov_matrices[4*lab + 2]/flux[lab];
-                cov_matrices[4*lab + 3] = cov_matrices[4*lab + 3]/flux[lab];
+            if (flux[lab] > 0.0) 
+            {
+                float_t w_sum  = flux[lab];
+                float_t w_sum2 = global_flux2[lab];
+                float_t denom  = w_sum - w_sum2 / w_sum;
+                if (denom > 0.0) 
+                {
+                    cov_matrices[4*lab    ] = cov_matrices[4*lab    ] / denom;
+                    cov_matrices[4*lab + 1] = cov_matrices[4*lab + 1] / denom;
+                    cov_matrices[4*lab + 2] = cov_matrices[4*lab + 2] / denom;
+                    cov_matrices[4*lab + 3] = cov_matrices[4*lab + 3] / denom;
+                }
+            }
         }
- 
-        free(pvt_centers_of_mass);
-        free(pvt_rew_com);
-        free(pvt_rew_norm);
-        free(pvt_cov_matrices);
-        free(pvt_flux);
-        free(pvt_x_limits);
-        free(pvt_y_limits);
-        free(pvt_areas);
-        free(pvt_parent_id);
-        free(pvt_r_max);
-    }
-
-    free(rew_com);
-    free(rew_norm);
     
+       free(pvt_com_sum_x);
+       free(pvt_com_sum_y);
+       free(pvt_flux);
+       free(pvt_flux2);
+       free(pvt_rew_sum_x);
+       free(pvt_rew_sum_y);
+       free(pvt_rew_norm);
+       free(pvt_cov);
+       free(pvt_r_max);
+       free(pvt_x_limits);
+       free(pvt_y_limits);
+       free(pvt_areas);
+       free(pvt_parent_id);
+   }
+   
+   // Free global COM sum accumulators after parallel region
+   free(com_sum_x);
+   free(com_sum_y);
+   free(global_flux);
+   free(global_flux2);
+   free(rew_sum_x);
+   free(rew_sum_y);
+   free(rew_norm);
+   free(com_std_x);
+   free(com_std_y);
+
     #undef LOWER_BOUND
     #undef UPPER_BOUND
-}
-
-
-// FIX: to check
-void compute_eigensystem_2x2(const double *A, double *lambda, double *V) {
-    // A is symmetric: [[a, b], [b, d]]
-    double a = A[0];
-    double b = A[1];
-    double d = A[3]; // Note: A[2] is also 'b'
-
-    // Use a small tolerance for comparison with zero
-    const double EPS = 1e-9;
-
-    // 1. Compute Eigenvalues (lambda)
-    // Formula: lambda = ( (a+d) +/- sqrt((a-d)^2 + 4*b^2) ) / 2
-    double sum = a + d;
-    double diff_sq = (a - d) * (a - d);
-    double four_b_sq = 4.0 * b * b;
-
-    // Discriminant Delta = (a-d)^2 + 4*b^2. Always non-negative.
-    double delta = diff_sq + four_b_sq;
-    double sqrt_delta = sqrt(delta);
-
-    // Store eigenvalues (lambda[0] = lambda1, lambda[1] = lambda2)
-    lambda[0] = (sum + sqrt_delta) / 2.0; // Larger eigenvalue
-    lambda[1] = (sum - sqrt_delta) / 2.0; // Smaller eigenvalue
-
-    // 2. Compute Eigenvectors (V)
-    double lambda1 = lambda[0];
-    double lambda2 = lambda[1];
-
-    // --- Eigenvector 1 (for lambda1) ---
-    // General case: v1 = [ b, lambda1 - a ]^T
-    if (fabs(b) < EPS) {
-        // Case: Diagonal matrix (b=0)
-        // Eigenvectors are [1, 0] and [0, 1].
-        V[0] = 1.0;
-        V[1] = 0.0;
-    } else {
-        // Standard case: [ b, lambda1 - a ]^T
-        V[0] = b;
-        V[1] = lambda1 - a;
-    }
-    
-    // --- Eigenvector 2 (for lambda2) ---
-    // V[2], V[3] store v2
-    // General case: v2 = [ b, lambda2 - a ]^T
-    if (fabs(b) < EPS) {
-        // Case: Diagonal matrix (b=0)
-        // Eigenvectors are [1, 0] and [0, 1].
-        // If lambda1 == lambda2, use the orthogonal basis [0, 1] for v2
-        if (fabs(lambda1 - lambda2) < EPS) {
-            V[2] = 0.0;
-            V[3] = 1.0;
-        } else {
-             // Distinct eigenvalues: The eigenvectors are [1, 0] and [0, 1].
-            V[2] = 0.0;
-            V[3] = 1.0;
-        }
-    } else {
-        // Standard case: [ b, lambda2 - a ]^T
-        V[2] = b;
-        V[3] = lambda2 - a;
-    }
-
-    // normalize eigenvector 1
-    double n1 = sqrt(V[0]*V[0] + V[1]*V[1]);
-    if (n1 > EPS) {
-        V[0] /= n1;
-        V[1] /= n1;
-    }
-
-    // normalize eigenvector 2
-    double n2 = sqrt(V[2]*V[2] + V[3]*V[3]);
-    if (n2 > EPS) {
-        V[2] /= n2;
-        V[3] /= n2;
-    }
-}
-
-void compute_eigensystems(float_t* cov_matrices, float_t* lambdas, float_t* vs, int nclusters)
-{
-    #pragma omp parallel for
-    for(int lab = 0; lab < nclusters; ++lab)
-    {
-        compute_eigensystem_2x2(cov_matrices + lab*4, lambdas + 2*lab, vs + 4*lab);
-    }
-}
-
-void export_cluster_assignment(Datapoint_info* points, int* labels, idx_t n)
-{
-	for(idx_t i = 0; i < n; ++i) labels[i] = points[i].cluster_idx;
 }
 
