@@ -1,0 +1,17 @@
+{
+
+    "_comment": "Configuration file for the iterative ADP deblending pipeline",
+
+    "image_path": "path/to/science/image",
+    "detection_path": "path/to/detection/segmap",
+
+    "preprocessing": {
+        "_comment": "Gaussian smoothing applied to the science image before ADP. Use null to disable smoothing",
+        "sigma_pix": 0.5
+    },
+
+    "output": {
+        "_comment": "Directory where the final and intermediate ADP products are written",
+        "directory": "path/to/output/dir"
+    }
+}
