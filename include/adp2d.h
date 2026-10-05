@@ -28,10 +28,7 @@
     #define MY_SIZE_MAX UINT64_MAX
 #endif
 
-
-
 #define NOBORDER MY_SIZE_MAX
-
 
 /**********************************
  * DATA STRUCTURES FOR CLUSTERING *
@@ -126,10 +123,12 @@ typedef struct border_t border_t;
 typedef struct SparseBorder_t SparseBorder_t;
 typedef struct AdjList_t AdjList_t; 
 
+// Border selection for interative Run
+void set_adp_border(int stat, float perc);
+
 void LinkedList_Insert(LinkedList *L, Node *n);
 void DynamicArray_allocate(lu_dynamicArray *a);
 void DynamicArray_pushBack(lu_dynamicArray *a, idx_t p);
-//void Clusters_allocate(Clusters *c);
 void Clusters_allocate(Clusters *c, int s);
 void Clusters_free(Clusters *c);
 
