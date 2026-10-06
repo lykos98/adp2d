@@ -8,6 +8,9 @@
 #include <string.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 #define DTHR 23.92812698
 #define PI_F 3.1415926f
 #define ARRAY_INCREMENT 500
@@ -144,3 +147,15 @@ void freeDatapointArray(Datapoint_info* d, size_t n);
 
 Datapoint_info* computeDensityFromImg(FLOAT_TYPE* vals, int* mask, int nrows, int ncols, int rmax, density_alg_t algorithm, bool use_log, bool use_adaptive_radius, int sigma_gaussian);
 void Delete_adjlist_element(Clusters * c, const idx_t list_idx, const idx_t el);
+
+int      FloatAndUintSize();
+void     setRhoErrK(Datapoint_info* points, float_t* rho, float_t* rhoErr, idx_t* k, size_t n);
+Clusters adpWrapper(Datapoint_info* dpInfo, int* mask, size_t nrows, size_t ncols, int min_size, float Z, bool halo, bool split_per_thread);
+void     export_cluster_assignment(Datapoint_info* points, int* labels, idx_t n);
+void     compute_eigensystems(float_t* cov_matrices, float_t* lambdas, float_t* vs, int nclusters);
+void     compute_covs(float_t* image, int* segmentation_map, int* mask, int nrows, int ncols, int nclusters, float_t* centers_of_mass, float_t* cov_matrices, float_t* flux, int* areas, float_t* rmax, int* parent_id, int* x_limits, int* y_limits);
+void     tiny_colorize(const char* fname, Datapoint_info* dp, float_t* data, uint32_t n_clusters, uint32_t og_width, uint32_t og_height, uint32_t target_width, uint32_t target_height);
+
+#ifdef __cplusplus
+}
+#endif

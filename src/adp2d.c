@@ -23,7 +23,7 @@
 unsigned int data_dims;
 idx_t Npart;
 const border_t border_null = {.density = -1.0, .error = 0, .idx = NOBORDER};
-const SparseBorder_t SparseBorder_null = {.density = -1.0, .error = 0, .idx = NOBORDER, .i = NOBORDER, .j = NOBORDER};
+const SparseBorder_t SparseBorder_null = {.i = NOBORDER, .j = NOBORDER, .idx = NOBORDER, .density = -1.0, .error = 0};
 
 /**************************************
  * Border selection for iterative run *
@@ -103,7 +103,7 @@ void AdjList_Insert(AdjList_t* l, SparseBorder_t b)
 	else
 	{
 		l -> size += PREALLOC_BORDERS; 
-		l -> data = realloc( l -> data, sizeof(SparseBorder_t) * ( l -> size));
+        l -> data = (SparseBorder_t*) realloc( l -> data, sizeof(SparseBorder_t) * ( l -> size));
 		l -> data[l -> count] = b;
 		l -> count++;
 	}
@@ -201,7 +201,7 @@ void DynamicArray_pushBack(lu_dynamicArray * a, idx_t p)
     else
     {
         a -> size += ARRAY_INCREMENT;
-        a -> data = realloc(a -> data, a -> size * sizeof(idx_t));
+        a -> data = (idx_t*) realloc(a -> data, a -> size * sizeof(idx_t));
         a -> data[a -> count] =  p;
         a -> count += 1;
     }
@@ -213,7 +213,7 @@ void DynamicArray_Reset(lu_dynamicArray * a){
 
 void DynamicArray_Reserve(lu_dynamicArray * a, idx_t n)
 {
-    a -> data = realloc(a -> data, n*sizeof(idx_t));
+    a -> data = (idx_t*) realloc(a -> data, n*sizeof(idx_t));
     a -> size = n;
 }
 
@@ -960,11 +960,11 @@ void Heuristic2(Clusters* cluster, Datapoint_info* dpInfo, int* mask, size_t nro
 				if(cluster -> UseSparseBorders)
 				{
 					//insert one and symmetric one
-					SparseBorder_t b = {.i = c, .j = ppc, .idx = i*ncols + j, .density = dpInfo[i*ncols + j].g, .error = dpInfo[i*ncols + j].log_rho_err}; 
+                    SparseBorder_t b   = {.i = (idx_t)c,   .j = (idx_t)ppc, .idx = i*ncols + j, .density = dpInfo[i*ncols + j].g, .error = dpInfo[i*ncols + j].log_rho_err};
 					SparseBorder_Insert(cluster, b);
 					
                     //get symmetric border
-					SparseBorder_t bsym = {.i = ppc, .j = c, .idx = i*ncols + j, .density = dpInfo[i*ncols + j].g, .error = dpInfo[i*ncols + j].log_rho_err}; 
+                    SparseBorder_t bsym= {.i = (idx_t)ppc, .j = (idx_t)c,   .idx = i*ncols + j, .density = dpInfo[i*ncols + j].g, .error = dpInfo[i*ncols + j].log_rho_err};
 					SparseBorder_Insert(cluster, bsym);
 
 				}
